@@ -1,0 +1,13 @@
+# run artefacts
+out/
+__pycache__/
+*.pyc
+
+# private workbooks / snapshots (never commit the internal Excel planner)
+*.xlsx
+*.xlsm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

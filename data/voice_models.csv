@@ -1,0 +1,13 @@
+Stage,Model,Total params (B),Bits / weight,Source,License,Notes
+VAD,Silero VAD,,,https://github.com/snakers4/silero-vad,Check source terms,JIT file about 2 MB; runtime memory and Intel GPU support unverified.
+VAD,Custom VAD,,,,User-supplied,Supply weight and performance measurements.
+Diarization,pyannote community-1,,,https://huggingface.co/pyannote/speaker-diarization-community-1,CC-BY-4.0,Gated download; runs offline after obtaining assets; full pipeline memory pending.
+Diarization,Custom diarization,,,,User-supplied,Supply weight and performance measurements.
+ASR,Qwen3-ASR-1.7B,2.349217408,16,https://huggingface.co/Qwen/Qwen3-ASR-1.7B,Apache-2.0,Total includes audio encoder; BF16 checkpoint. Intel GPU runtime unverified.
+ASR,Qwen3-ASR-0.6B,0.938008576,16,https://huggingface.co/Qwen/Qwen3-ASR-0.6B,Apache-2.0,Total includes audio encoder; BF16 checkpoint. Intel GPU runtime unverified.
+ASR,Whisper tiny,0.03776064,32,https://huggingface.co/openai/whisper-tiny,Apache-2.0,Checkpoint F32; weights may differ with selected precision or runtime.
+ASR,Whisper base,0.07259392,32,https://huggingface.co/openai/whisper-base,Apache-2.0,Checkpoint F32; weights may differ with selected precision or runtime.
+ASR,Whisper small,0.241734912,32,https://huggingface.co/openai/whisper-small,Apache-2.0,Checkpoint F32; weights may differ with selected precision or runtime.
+ASR,Whisper large-v3,1.54349056,16,https://huggingface.co/openai/whisper-large-v3,Apache-2.0,Checkpoint F16; Intel GPU runtime and memory unverified.
+ASR,Distil-Whisper large-v3,0.75640576,16,https://huggingface.co/distil-whisper/distil-large-v3,MIT,Checkpoint F16; English ASR; Intel GPU runtime and memory unverified.
+ASR,Custom ASR,,,,User-supplied,Supply weight and performance measurements.
