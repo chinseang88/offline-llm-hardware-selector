@@ -597,6 +597,20 @@ function openEvidence(row, kind) {
     : "No parameter-level evidence records were found for this public row.";
   content.append(intro);
 
+  if (kind === "model") {
+    const profile = document.createElement("section");
+    profile.className = "model-360";
+    const need = memoryNeed(row);
+    profile.innerHTML = `<p class="section-label">Model 360</p><div class="model-360-grid"><div><small>Parameters</small><strong>${decimal.format(row["Total params (B)"])}B</strong><span>${decimal.format(row["Active params (B)"])}B active</span></div><div><small>Architecture</small><strong>${escapeHtml(row["Runtime arch"] || row.Type || "—")}</strong><span>${row.Layers || "—"} layers · ${row["KV heads"] || "—"} KV heads</span></div><div><small>Current workload</small><strong>${decimal.format(need.total)} GB</strong><span>${state.bits}-bit · ${state.context.toLocaleString()} context</span></div><div><small>Published context</small><strong>${Number(row["Max context"]) ? Number(row["Max context"]).toLocaleString() : "—"}</strong><span>${escapeHtml(row.License || "License pending")}</span></div></div><p class="model-education">Parameter count determines checkpoint size; active parameters drive compute traffic; context, KV heads, and head dimension determine KV-cache growth. Architecture and runtime support decide which inference engines can execute the model.</p>`;
+    content.append(profile);
+
+    const benchmarkFacts = facts.filter((fact) => /benchmark|tok\/s|throughput|latency|measured|ttft|decode/i.test(`${fact.Parameter} ${fact.Note} ${fact["Source type"]}`));
+    const benchmark = document.createElement("section");
+    benchmark.className = "benchmark-note";
+    benchmark.innerHTML = `<p class="section-label">Measured performance</p><strong>${benchmarkFacts.length ? `${benchmarkFacts.length} measured-performance records` : "No measured benchmark is stored for this model"}</strong><p>${benchmarkFacts.length ? "Open each record below for the measured machine, runtime, precision, workload, and source citation." : "The tok/s values in the selector are bandwidth-model estimates, not measurements. A benchmark is shown here only when the evidence record includes its test system and workload."}</p>`;
+    content.append(benchmark);
+  }
+
   const sourceUrls = urlList(row["Source URL"]);
   if (sourceUrls.length) {
     const links = document.createElement("div");
@@ -631,6 +645,15 @@ function openEvidence(row, kind) {
       note.className = "fact-note";
       note.textContent = fact.Note || fact["Source value / quote"] || "No note.";
       body.append(value, status, note);
+      if (fact["Source URL"]) {
+        const source = document.createElement("a");
+        source.className = "fact-source";
+        source.href = fact["Source URL"];
+        source.target = "_blank";
+        source.rel = "noreferrer";
+        source.textContent = `${fact["Source type"] || sourceLabel(fact["Source URL"])} · checked ${fact.Checked || "date not recorded"} ↗`;
+        body.append(source);
+      }
       block.append(heading, body);
       list.append(block);
     }
@@ -790,7 +813,7 @@ function renderHardwareView() {
     article.className = "result-row model-result-row";
     if (!row.safeQuant) article.classList.add("quality-warning");
     const excelNeed = excelMemoryNeed(model, state.hardwareBits, state.hardwareContext, state.hardwareUsers).total;
-    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.fits ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.fits ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : "Memory shortfall"}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Fact check ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i></button></div>`;
+    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.fits ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.fits ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : "Memory shortfall"}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Know more about ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i><span>Know more</span></button></div>`;
     article.querySelector(".row-detail").addEventListener("click", () => openEvidence(model, "model"));
     host.append(article);
   }
