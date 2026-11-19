@@ -12,6 +12,8 @@ const state = {
   page: "model",
   hardwareSort: "speed-desc",
   modelSort: "speed-desc",
+  databaseSort: { table: "models", column: "", direction: "asc" },
+  evidenceSort: { column: "Checked", direction: "desc" },
   intelOnly: false,
   minMemory: 0,
   maxPower: 0,
@@ -494,6 +496,7 @@ function vendorInitial(vendor, name) {
 function renderRows() {
   const host = byId("results");
   const rows = filteredRows();
+  byId("hardware-sort-output").textContent = `Sorted by ${byId("hardware-sort").selectedOptions[0].textContent} · ${rows.length} shown`;
   host.replaceChildren();
   if (!rows.length) {
     const empty = document.createElement("div");
@@ -742,6 +745,7 @@ function renderHardwareView() {
   const capacity = hardwareMemory(item);
   const rows = compatibleModels(item);
   const fits = compatibleModels(item).filter((row) => row.fits).length;
+  byId("model-sort-output").textContent = `Sorted by ${byId("model-sort").selectedOptions[0].textContent} · ${rows.length} shown`;
   const source = item.raw["Source URL"] || "";
   const taskMinimum = taskRules[state.hardwareTask] || taskRules["General chat / Q&A"];
   byId("hardware-profile-note").textContent = `${state.hardwareTask}: model rows below the task quant floor are not shown as meeting the speed target. ${state.hardwareOffload === "Y" && state.hardwareCpu ? `CPU offload may use ${decimal.format(Number(byId("hardware-ram-input").value || state.hardwareCpu["Max RAM (GB)"]))} GB host RAM.` : "CPU offload disabled."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
@@ -814,12 +818,52 @@ function databaseRows() {
   return rows.filter((row) => isIntelHardware(row, name === "gpus" ? "gpu" : "cpu"));
 }
 
-function renderDatabase() {
-  const rows = databaseRows();
+function comparableValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = String(value).replace(/,/g, "");
+  if (/^-?\d+(?:\.\d+)?$/.test(numeric)) return Number(numeric);
+  const date = Date.parse(value);
+  if (!Number.isNaN(date) && /\d{4}-\d{2}-\d{2}/.test(String(value))) return date;
+  return String(value).toLocaleLowerCase();
+}
+
+function compareValues(a, b, direction = "asc") {
+  const av = comparableValue(a);
+  const bv = comparableValue(b);
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  const result = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
+  return direction === "asc" ? result : -result;
+}
+
+function sortedDatabaseRows() {
+  const name = byId("database-select").value;
   const query = byId("database-search").value.toLowerCase().trim();
+  const sort = state.databaseSort;
+  const rows = databaseRows().filter((row) => !query || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query)));
+  if (sort.table === name && sort.column) rows.sort((a, b) => compareValues(a[sort.column], b[sort.column], sort.direction));
+  return rows;
+}
+
+function renderDatabase() {
+  const name = byId("database-select").value;
   const table = byId("database-table");
+  const sort = state.databaseSort;
   table.replaceChildren();
-  const visible = rows.filter((row) => !query || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query))).slice(0, 500);
+  const sortedRows = sortedDatabaseRows();
+  const visible = sortedRows.slice(0, 500);
+  const allCols = databaseRows().length ? Object.keys(databaseRows()[0]).filter((key) => !key.startsWith("_")) : [];
+  const sortSelect = byId("database-sort-column");
+  const currentOptions = [...sortSelect.options].map((option) => option.value);
+  if (currentOptions.join("|") !== allCols.join("|")) {
+    sortSelect.replaceChildren(new Option("Original order", ""), ...allCols.map((column) => new Option(column, column)));
+  }
+  sortSelect.value = sort.table === name ? sort.column : "";
+  byId("database-sort-direction").dataset.direction = sort.direction;
+  byId("database-sort-direction").querySelector("span").textContent = sort.direction === "asc" ? "Ascending" : "Descending";
+  byId("database-sort-direction").disabled = !sort.column;
+  byId("database-sort-output").textContent = sort.table === name && sort.column ? `Sorted by ${sort.column} · ${sort.direction === "asc" ? "ascending" : "descending"} · ${sortedRows.length} matching rows` : `Original order · ${sortedRows.length} matching rows · choose a sort field`;
   if (!visible.length) {
     table.innerHTML = "<tbody><tr><td>No matching rows.</td></tr></tbody>";
     return;
@@ -827,7 +871,21 @@ function renderDatabase() {
   const cols = Object.keys(visible[0]).filter((key) => !key.startsWith("_"));
   const head = document.createElement("thead");
   const hr = document.createElement("tr");
-  for (const col of cols) { const th = document.createElement("th"); th.textContent = col; hr.append(th); }
+  for (const col of cols) {
+    const th = document.createElement("th");
+    const button = document.createElement("button");
+    button.className = "table-sort";
+    const active = sort.table === name && sort.column === col;
+    button.innerHTML = `<span>${escapeHtml(col)}</span><span class="sort-mark">${active ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</span>`;
+    button.title = `Sort by ${col}`;
+    th.setAttribute("aria-sort", active ? (sort.direction === "asc" ? "ascending" : "descending") : "none");
+    button.addEventListener("click", () => {
+      state.databaseSort = { table: name, column: col, direction: active && sort.direction === "asc" ? "desc" : "asc" };
+      renderDatabase();
+    });
+    th.append(button);
+    hr.append(th);
+  }
   head.append(hr);
   const body = document.createElement("tbody");
   for (const row of visible) {
@@ -851,7 +909,7 @@ function renderDatabase() {
   table.append(head, body);
 }
 
-function renderEvidence() {
+function sortedEvidenceRows() {
   const query = byId("evidence-search").value.toLowerCase().trim();
   const intelGpuNames = new Set(state.data.gpus.filter((row) => row.Vendor === "Intel").map((row) => row.Accelerator));
   const intelCpuNames = new Set(state.data.cpus.filter((row) => isIntelHardware(row, "cpu")).map((row) => row["CPU / platform"]));
@@ -861,8 +919,15 @@ function renderEvidence() {
     const matchesStatus = state.evidenceStatus === "all" || (state.evidenceStatus === "OTHER" ? !["VERIFIED", "MISMATCH", "DERIVED/ESTIMATE"].includes(row.Status) : row.Status === state.evidenceStatus);
     return matchesQuery && matchesStatus;
   });
-  byId("evidence-count").textContent = `${rows.length} matching checks · ${state.data.evidence.length} total`;
-  rows = rows.slice(0, 300);
+  rows.sort((a, b) => compareValues(a[state.evidenceSort.column], b[state.evidenceSort.column], state.evidenceSort.direction));
+  return rows;
+}
+
+function renderEvidence() {
+  const sortedRows = sortedEvidenceRows();
+  byId("evidence-count").textContent = `${sortedRows.length} matching checks · ${state.data.evidence.length} total`;
+  byId("evidence-sort-output").textContent = `Sorted by ${byId("evidence-sort-column").selectedOptions[0].textContent} · ${state.evidenceSort.direction === "asc" ? "ascending" : "descending"} · ${sortedRows.length} matching checks`;
+  const rows = sortedRows.slice(0, 300);
   const host = byId("evidence-results");
   host.replaceChildren();
   for (const row of rows) {
@@ -874,6 +939,14 @@ function renderEvidence() {
     host.append(article);
   }
   if (!rows.length) host.innerHTML = `<div class="empty-state"><h3>No evidence records match.</h3><p>Change the status filter or search text.</p></div>`;
+}
+
+function downloadCsv(name, rows) {
+  const cols = rows.length ? Object.keys(rows[0]).filter((key) => !key.startsWith("_")) : [];
+  const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const csv = [cols.map(csvCell).join(","), ...rows.map((row) => cols.map((col) => csvCell(row[col])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a"); link.href = url; link.download = `${name}.csv`; link.click(); URL.revokeObjectURL(url);
 }
 
 function bindEvents() {
@@ -973,18 +1046,30 @@ function bindEvents() {
   for (const id of ["hardware-model-vendor-filter", "hardware-model-type-filter", "hardware-model-filter"]) byId(id).addEventListener("change", renderHardwareView);
   byId("model-sort").addEventListener("change", (event) => { state.modelSort = event.target.value; renderHardwareView(); });
 
-  byId("database-select").addEventListener("change", renderDatabase);
-  byId("database-search").addEventListener("input", renderDatabase);
-  byId("download-table").addEventListener("click", () => {
-    const name = byId("database-select").value;
-    const rows = databaseRows();
-    const cols = rows.length ? Object.keys(rows[0]).filter((key) => !key.startsWith("_")) : [];
-    const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const csv = [cols.map(csvCell).join(","), ...rows.map((row) => cols.map((col) => csvCell(row[col])).join(","))].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = `${name}.csv`; link.click(); URL.revokeObjectURL(url);
+  byId("database-select").addEventListener("change", () => {
+    state.databaseSort = { table: byId("database-select").value, column: "", direction: "asc" };
+    renderDatabase();
   });
+  byId("database-search").addEventListener("input", renderDatabase);
+  byId("database-sort-column").addEventListener("change", (event) => {
+    state.databaseSort = { table: byId("database-select").value, column: event.target.value, direction: "asc" };
+    renderDatabase();
+  });
+  byId("database-sort-direction").addEventListener("click", () => {
+    state.databaseSort.direction = state.databaseSort.direction === "asc" ? "desc" : "asc";
+    renderDatabase();
+  });
+  byId("download-table").addEventListener("click", () => downloadCsv(byId("database-select").value, sortedDatabaseRows()));
+  byId("download-evidence").addEventListener("click", () => downloadCsv("evidence", sortedEvidenceRows()));
   byId("evidence-search").addEventListener("input", renderEvidence);
+  byId("evidence-sort-column").addEventListener("change", (event) => { state.evidenceSort.column = event.target.value; renderEvidence(); });
+  byId("evidence-sort-direction").addEventListener("click", () => {
+    state.evidenceSort.direction = state.evidenceSort.direction === "asc" ? "desc" : "asc";
+    const direction = state.evidenceSort.direction;
+    byId("evidence-sort-direction").dataset.direction = direction;
+    byId("evidence-sort-direction").querySelector("span").textContent = direction === "asc" ? "Ascending" : "Descending";
+    renderEvidence();
+  });
   for (const button of $$(".status-filter")) button.addEventListener("click", () => {
     state.evidenceStatus = button.dataset.status;
     $$(".status-filter").forEach((item) => item.classList.toggle("active", item === button));

@@ -8,9 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20261119-sort">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20261119-sort" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -145,6 +145,7 @@
           <label class="result-filter"><i data-lucide="filter"></i><span>Show</span><select id="fit-filter"><option value="all">All hardware</option><option value="fits" selected>Fits in memory</option><option value="fast">Meets speed target</option></select></label>
           <label class="result-filter"><i data-lucide="arrow-up-down"></i><span>Sort</span><select id="hardware-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="memory-desc">Usable memory: high to low</option><option value="memory-asc">Usable memory: low to high</option><option value="bandwidth-desc">Bandwidth: high to low</option><option value="power-asc">Power: low to high</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label>
         </div>
+        <output class="sort-output" id="hardware-sort-output" aria-live="polite"></output>
       </div>
 
       <section class="comparison" aria-label="Hardware fit comparison">
@@ -165,7 +166,7 @@
         <label class="control"><span>Users</span><select id="hardware-user-select"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option><option>64</option></select></label>
         <label class="control"><span>Target tok/s</span><select id="hardware-target-input"><option>5</option><option>10</option><option>15</option><option selected>20</option><option>30</option><option>50</option></select></label>
       </div>
-      <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label><label><i data-lucide="arrow-up-down"></i> Sort models <select id="model-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="total-desc">Total params: high to low</option><option value="active-desc">Active params: high to low</option><option value="need-asc">Memory need: low to high</option><option value="need-desc">Memory need: high to low</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label></div>
+      <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label></div>
       <details class="advanced-controls" open>
         <summary><span><i data-lucide="server"></i> Selected CPU, GPU and AI workload</span><small>Hardware-led Excel inputs</small></summary>
         <div class="profile-grid">
@@ -188,18 +189,23 @@
         <div class="profile-note" id="hardware-profile-note"></div>
       </details>
       <div class="hardware-summary" id="hardware-summary"></div>
+      <div class="sort-panel"><label><i data-lucide="arrow-up-down"></i><span>Sort runnable models</span><select id="model-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="total-desc">Total params: high to low</option><option value="active-desc">Active params: high to low</option><option value="need-asc">Memory need: low to high</option><option value="need-desc">Memory need: high to low</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label><output class="sort-output" id="model-sort-output" aria-live="polite"></output></div>
       <section class="comparison"><div class="table-head model-table-head"><span>Model</span><span>Memory need</span><span>Decode estimate</span><span>Architecture</span><span>Evidence</span></div><div id="hardware-model-results" class="results" aria-live="polite"></div></section>
     </section>
 
     <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Public source tables</p><h1 id="database-title">The database, without hiding the fields.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Read-only CSV mirror</span></div></div>
       <div class="data-toolbar"><label>Table <select id="database-select"><option value="models">Models (170)</option><option value="gpus">GPUs (101 incl. 7 Crescent Island planning)</option><option value="cpus">CPUs (56 incl. 15 Nova Lake planning)</option><option value="quants">Quantization</option></select></label><label class="database-search"><i data-lucide="search"></i><input id="database-search" type="search" placeholder="Search this table"></label><button class="secondary-button" id="download-table"><i data-lucide="download"></i> Download CSV</button></div>
-      <div class="data-table-wrap"><table id="database-table"></table></div>
+      <div class="data-table-wrap">
+        <div class="sort-panel table-sort-panel"><label><i data-lucide="arrow-up-down"></i><span>Sort table by</span><select id="database-sort-column"></select></label><button class="sort-direction" id="database-sort-direction" data-direction="asc" title="Toggle Database sort direction"><i data-lucide="arrow-up-down"></i><span>Ascending</span></button><output class="sort-output" id="database-sort-output" aria-live="polite"></output></div>
+        <table id="database-table"></table>
+      </div>
     </section>
 
     <section class="workspace page-view data-page" id="evidence-page" aria-labelledby="evidence-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Fact-check ledger</p><h1 id="evidence-title">Every parameter, its source, and its status.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span id="evidence-count">Loading checks…</span></div></div>
-      <div class="evidence-toolbar"><button class="status-filter active" data-status="all">All</button><button class="status-filter" data-status="VERIFIED">Verified</button><button class="status-filter" data-status="MISMATCH">Corrected</button><button class="status-filter" data-status="DERIVED/ESTIMATE">Derived</button><button class="status-filter" data-status="OTHER">Review / missing</button><label class="database-search"><i data-lucide="search"></i><input id="evidence-search" type="search" placeholder="Search item, parameter, note, or URL"></label><a class="secondary-button" href="https://raw.githubusercontent.com/chinseang88/offline-llm-hardware-selector/main/data/evidence.csv" download><i data-lucide="download"></i> Download evidence</a></div>
+      <div class="evidence-toolbar"><button class="status-filter active" data-status="all">All</button><button class="status-filter" data-status="VERIFIED">Verified</button><button class="status-filter" data-status="MISMATCH">Corrected</button><button class="status-filter" data-status="DERIVED/ESTIMATE">Derived</button><button class="status-filter" data-status="OTHER">Review / missing</button><div class="sort-panel compact"><label><i data-lucide="arrow-up-down"></i><span>Sort evidence by</span><select id="evidence-sort-column"><option value="Checked">Checked date</option><option value="Status">Status</option><option value="Item">Item</option><option value="Sheet">Table</option><option value="Parameter">Parameter</option><option value="Source type">Source type</option></select></label><button class="sort-direction" id="evidence-sort-direction" data-direction="desc" title="Toggle sort direction"><i data-lucide="arrow-down-wide-narrow"></i><span>Descending</span></button></div><label class="database-search"><i data-lucide="search"></i><input id="evidence-search" type="search" placeholder="Search item, parameter, note, or URL"></label><button class="secondary-button" id="download-evidence"><i data-lucide="download"></i> Download evidence</button></div>
+      <output class="sort-output" id="evidence-sort-output" aria-live="polite"></output>
       <div id="evidence-results" class="evidence-results"></div>
     </section>
 
