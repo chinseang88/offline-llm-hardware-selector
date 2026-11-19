@@ -17,6 +17,7 @@ Open the live selector at **https://chinseang88.github.io/offline-llm-hardware-s
 - **Model → Hardware:** exact catalog dropdowns for model/vendor/type, quantization, context/users, target speed, runtime, primary application, KV precision, prompt/answer lengths, CPU offload, host CPU/RAM, GPU quantity/VRAM, host power and PCIe width. Intel-only rebuilds the CPU and GPU dropdowns, results, Database and product-evidence views.
 - **Hardware → Models:** independently select CPU and installed RAM, GPU and physical VRAM, GPU quantity, runtime, application, KV precision, offload, headroom and bandwidth utilization, then list models that fit. Intel mode includes 15 Nova Lake planning CPUs and 7 Crescent Island planning GPUs, labelled with pending public-source verification.
 - **Database / Evidence:** search, inspect, filter, and download the public model/GPU/CPU and source-check tables.
+- **Output sorting:** sort hardware by speed, usable memory, bandwidth, power, name, vendor or evidence; sort models by speed, total/active params, memory need, name, vendor or evidence. GPU selections synchronize across model-led, hardware-led and mixed catalog controls.
 - **Excel parity:** each result shows the page vs Excel decode estimate, and the Method view summarizes aggregate 8K/32K memory/throughput deltas from the same workbook formulas. A comparison with another external site requires that site's URL.
 
 The static app lives in `docs/`. Rebuild its dataset after changing any CSV:

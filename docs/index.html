@@ -92,7 +92,7 @@
           <label>Installed host RAM (auto-paired to CPU)<select id="host-ram-input"><option value="0">From CPU</option><option>8</option><option>16</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>384</option><option>512</option><option>768</option><option>1024</option><option>2048</option></select></label>
           <label>Maximum CPU base power (W)<select id="cpu-power-input"><option>6</option><option>10</option><option>15</option><option>25</option><option>28</option><option>45</option><option>55</option><option>65</option><option>125</option><option>150</option><option>175</option><option>250</option><option selected>500</option></select></label>
           <label>PCIe width<select id="pcie-width-select"><option>Auto</option><option>x16 per card</option><option>x8 per card (minimum)</option></select></label>
-          <label>Preferred accelerator<select id="preferred-gpu-select"><option value="">No preference</option></select></label>
+          <label>Shared GPU selection<select id="preferred-gpu-select"><option value="">No preference — show all GPUs</option></select></label>
           <label>Device VRAM (auto-paired to GPU)<select id="device-vram-input"><option value="0">Catalog VRAM</option><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
         </div>
         <div class="profile-note" id="profile-note"></div>
@@ -140,7 +140,10 @@
           <button class="active" data-view="gpus"><i data-lucide="cpu"></i> GPUs <span id="gpu-count">0</span></button>
           <button data-view="cpus"><i data-lucide="server"></i> CPUs <span id="cpu-count">0</span></button>
         </div>
-        <label class="result-filter"><i data-lucide="filter"></i><span>Show</span><select id="fit-filter"><option value="all">All hardware</option><option value="fits" selected>Fits in memory</option><option value="fast">Meets speed target</option></select></label>
+        <div class="result-filters">
+          <label class="result-filter"><i data-lucide="filter"></i><span>Show</span><select id="fit-filter"><option value="all">All hardware</option><option value="fits" selected>Fits in memory</option><option value="fast">Meets speed target</option></select></label>
+          <label class="result-filter"><i data-lucide="arrow-up-down"></i><span>Sort</span><select id="hardware-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="memory-desc">Usable memory: high to low</option><option value="memory-asc">Usable memory: low to high</option><option value="bandwidth-desc">Bandwidth: high to low</option><option value="power-asc">Power: low to high</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label>
+        </div>
       </div>
 
       <section class="comparison" aria-label="Hardware fit comparison">
@@ -161,13 +164,13 @@
         <label class="control"><span>Users</span><select id="hardware-user-select"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option><option>64</option></select></label>
         <label class="control"><span>Target tok/s</span><select id="hardware-target-input"><option>5</option><option>10</option><option>15</option><option selected>20</option><option>30</option><option>50</option></select></label>
       </div>
-      <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label></div>
+      <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label><label><i data-lucide="arrow-up-down"></i> Sort models <select id="model-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="total-desc">Total params: high to low</option><option value="active-desc">Active params: high to low</option><option value="need-asc">Memory need: low to high</option><option value="need-desc">Memory need: high to low</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label></div>
       <details class="advanced-controls" open>
         <summary><span><i data-lucide="server"></i> Selected CPU, GPU and AI workload</span><small>Hardware-led Excel inputs</small></summary>
         <div class="profile-grid">
           <label>CPU<select id="hardware-cpu-select"></select></label>
           <label>Installed RAM (auto-paired to CPU)<select id="hardware-ram-input"><option>8</option><option>16</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>384</option><option>512</option><option>768</option><option>1024</option><option>2048</option></select></label>
-          <label>GPU<select id="hardware-gpu-select"></select></label>
+          <label>GPU (shared selection)<select id="hardware-gpu-select"></select></label>
           <label>GPU VRAM (auto-paired to GPU)<select id="hardware-vram-input"><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
           <label>GPU quantity<select id="hardware-gpu-quantity-input"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
           <label>Runtime / library<select id="hardware-runtime-select"><option>llama.cpp</option><option>Ollama</option><option>LM Studio</option><option>vLLM</option><option>SGLang</option><option>TensorRT-LLM</option><option>ExLlamaV2 / V3</option><option>MLX / mlx-lm</option><option>OpenVINO GenAI</option><option>IPEX-LLM</option></select></label>

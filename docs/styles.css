@@ -125,6 +125,7 @@ h1 { max-width: 780px; margin: 0; font-size: clamp(36px, 5vw, 72px); line-height
 .view-switcher button span { min-width: 20px; padding: 1px 5px; background: #e2e5df; font-family: var(--mono); font-size: 10px; }
 .view-switcher button.active { color: var(--ink); }
 .view-switcher button.active::after { content: ""; position: absolute; inset: auto 0 -1px; height: 3px; background: var(--ink); }
+.result-filters { display: flex; align-items: center; gap: 14px; }
 .result-filter { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
 .result-filter svg { width: 14px; }
 .result-filter select { border: 0; background: transparent; font-size: 12px; font-weight: 600; }
@@ -286,7 +287,9 @@ dialog p:not(.section-label) { line-height: 1.55; color: var(--muted); }
   .target-panel > label { grid-column: span 2; }
   .target-panel p { align-self: end; }
   .result-toolbar { align-items: end; }
-  .result-filter { max-width: 140px; }
+  .result-filters { display: grid; gap: 5px; max-width: 150px; }
+  .result-filter { max-width: 150px; min-width: 0; }
+  .result-filter select { max-width: 150px; }
   .result-filter > span, .result-filter svg { display: none; }
   .table-head { display: none; }
   .result-row { grid-template-columns: minmax(0, 1fr) 105px; gap: 13px; padding: 17px 8px; }
