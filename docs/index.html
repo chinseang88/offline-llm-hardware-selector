@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Compare offline LLM memory requirements and hardware fit using evidence-backed GPU, CPU, model, and context data.">
+  <title>Model Fit — Offline LLM Hardware Selector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="Model Fit home">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>Model Fit</span>
+    </a>
+    <nav class="header-nav" aria-label="Page sections">
+      <a href="#compare">Compare</a>
+      <a href="#method">Method</a>
+      <a href="https://github.com/chinseang88/offline-llm-hardware-selector" target="_blank" rel="noreferrer">GitHub</a>
+    </nav>
+    <button class="icon-button" id="open-about" aria-label="About these estimates" title="About these estimates"><i data-lucide="info"></i></button>
+  </header>
+
+  <main>
+    <section class="workspace" id="compare" aria-labelledby="page-title">
+      <div class="workspace-heading">
+        <div>
+          <p class="kicker">Offline LLM sizing desk</p>
+          <h1 id="page-title">Find the machine that fits the model.</h1>
+        </div>
+        <div class="dataset-stamp" title="Public, source-backed dataset">
+          <span class="stamp-pulse"></span>
+          <span id="dataset-count">Loading evidence-backed data…</span>
+        </div>
+      </div>
+
+      <div class="control-strip">
+        <label class="control model-control">
+          <span>Model</span>
+          <span class="select-wrap"><input id="model-search" type="search" value="Qwen3 32B" autocomplete="off" aria-controls="model-menu" aria-expanded="false"><i data-lucide="search"></i></span>
+          <div class="search-menu" id="model-menu" role="listbox" hidden></div>
+        </label>
+        <label class="control">
+          <span>Quantization</span>
+          <select id="quant-select"></select>
+        </label>
+        <label class="control">
+          <span>Context</span>
+          <select id="context-select">
+            <option value="4096">4K</option>
+            <option value="8192" selected>8K</option>
+            <option value="16384">16K</option>
+            <option value="32768">32K</option>
+            <option value="65536">64K</option>
+            <option value="131072">128K</option>
+          </select>
+        </label>
+        <label class="control">
+          <span>Users</span>
+          <select id="user-select"><option>1</option><option>2</option><option>4</option><option>8</option></select>
+        </label>
+        <label class="control vendor-control">
+          <span>Hardware</span>
+          <select id="vendor-select"><option value="all">All vendors</option><option>Intel</option><option>NVIDIA</option><option>AMD</option><option>Apple</option></select>
+        </label>
+        <label class="control toggle-control">
+          <span>Legacy</span>
+          <button class="toggle" id="legacy-toggle" type="button" aria-pressed="false"><span></span></button>
+        </label>
+      </div>
+
+      <div class="summary-layout">
+        <section class="fit-summary" aria-labelledby="model-summary-title">
+          <div class="summary-topline">
+            <div>
+              <p class="section-label">Selected model</p>
+              <h2 id="model-summary-title">Loading…</h2>
+            </div>
+            <button class="text-button" id="show-model-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button>
+          </div>
+          <div class="metric-row">
+            <div class="metric"><span id="total-params">—</span><small>Total parameters</small></div>
+            <div class="metric"><span id="active-params">—</span><small>Active parameters</small></div>
+            <div class="metric"><span id="need-memory">—</span><small>Memory needed</small></div>
+            <div class="metric accent"><span id="fits-count">—</span><small>Single-device fits</small></div>
+          </div>
+          <div class="memory-map" aria-label="Memory requirement breakdown">
+            <div class="memory-track" id="memory-track">
+              <span class="memory-segment weights" id="weights-segment"></span>
+              <span class="memory-segment kv" id="kv-segment"></span>
+              <span class="memory-segment runtime" id="runtime-segment"></span>
+            </div>
+            <div class="memory-legend">
+              <span><i class="swatch weights"></i>Weights <b id="weights-label">—</b></span>
+              <span><i class="swatch kv"></i>KV cache <b id="kv-label">—</b></span>
+              <span><i class="swatch runtime"></i>Runtime <b id="runtime-label">—</b></span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="target-panel" aria-label="Performance target">
+          <label for="target-input">Target decode speed</label>
+          <div class="target-value"><input id="target-input" type="number" min="1" max="200" value="20"><span>tok/s</span></div>
+          <p>Rows meeting both memory capacity and this estimated decode target are marked <b>Meets target</b>.</p>
+        </aside>
+      </div>
+
+      <div class="result-toolbar">
+        <div class="view-switcher" role="group" aria-label="Result view">
+          <button class="active" data-view="gpus"><i data-lucide="cpu"></i> GPUs <span id="gpu-count">0</span></button>
+          <button data-view="cpus"><i data-lucide="server"></i> CPUs <span id="cpu-count">0</span></button>
+        </div>
+        <label class="result-filter"><i data-lucide="filter"></i><span>Show</span><select id="fit-filter"><option value="all">All hardware</option><option value="fits" selected>Fits in memory</option><option value="fast">Meets speed target</option></select></label>
+      </div>
+
+      <section class="comparison" aria-label="Hardware fit comparison">
+        <div class="table-head" id="table-head">
+          <span>Hardware</span><span>Memory fit</span><span>Decode estimate</span><span>Power</span><span>Evidence</span>
+        </div>
+        <div id="results" class="results" aria-live="polite"></div>
+      </section>
+      <p class="table-note"><i data-lucide="activity"></i> Decode speed is a bandwidth model, not a benchmark. Validate runtime, thermals, kernels, and batch behavior on target hardware.</p>
+    </section>
+
+    <section class="method-section" id="method" aria-labelledby="method-title">
+      <div class="method-intro">
+        <p class="section-label">One calculation, visible assumptions</p>
+        <h2 id="method-title">No black-box recommendation.</h2>
+        <p>Every comparison is calculated in the browser from the same public CSV rows used by the command-line tool. Open any source-backed hardware or model row to inspect the values behind it.</p>
+      </div>
+      <div class="formula-grid">
+        <article><span>01</span><h3>Weights</h3><code>params × bpw / 8 × 1.03</code><p>The total checkpoint payload plus a 3% tensor and metadata allowance.</p></article>
+        <article><span>02</span><h3>KV cache</h3><code>2 × L × Hkv × D × 2 bytes</code><p>FP16 key and value cache for the active context. Hybrid and MLA rows follow source-specific conventions.</p></article>
+        <article><span>03</span><h3>Decode</h3><code>eff × bandwidth / active work</code><p>A memory-bound estimate using Intel, Apple, and general accelerator efficiency factors.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+  <aside class="evidence-drawer" id="evidence-drawer" aria-labelledby="drawer-title" aria-hidden="true">
+    <div class="drawer-header"><div><p class="section-label">Primary-source trail</p><h2 id="drawer-title">Fact check</h2></div><button class="icon-button" id="close-drawer" aria-label="Close fact check"><i data-lucide="x"></i></button></div>
+    <div id="drawer-content" class="drawer-content"></div>
+  </aside>
+
+  <dialog id="about-dialog">
+    <button class="icon-button dialog-close" id="close-about" aria-label="Close"><i data-lucide="x"></i></button>
+    <p class="section-label">How to read this page</p>
+    <h2>Evidence beats precision theatre.</h2>
+    <p>Green rows have all compared specifications source-verified. Amber rows contain a derived value, a value not published on the source page, or a retired source. Red corrections and blue repo additions remain visible in the full evidence log.</p>
+    <p>Tok/s values are planning estimates from bandwidth and active parameters. They intentionally do not pretend to be hardware benchmarks.</p>
+    <a class="primary-link" href="https://github.com/chinseang88/offline-llm-hardware-selector/blob/main/data/evidence.csv" target="_blank" rel="noreferrer">Open full evidence log <i data-lucide="arrow-up-right"></i></a>
+  </dialog>
+</body>
+</html>

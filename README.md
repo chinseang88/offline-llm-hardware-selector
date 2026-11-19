@@ -10,10 +10,21 @@ Evidence-backed sizing tables and tools for running LLMs **offline** on GPUs, CP
 
 Every row carries a `Source URL` and an `Evidence status` ("7 verified / 0 corrected / 0 estimate-or-unsourced"). Sources are Hugging Face metadata/configs/model cards, Intel ARK, AMD and NVIDIA product pages, whitepapers and datasheets, Apple tech specs, llama.cpp, and the PCI-SIG / SATA-IO / USB-IF / JEDEC / OCP specifications. Nothing is copied from third-party spec aggregators.
 
-## Quick start
+## Browser comparison page
+
+Open the live selector at **https://chinseang88.github.io/offline-llm-hardware-selector/**.
+It compares a selected model’s memory requirement (weights + context KV cache + runtime) against public GPU and CPU rows, then ranks the candidates by estimated decode throughput. Each model and hardware row opens its primary-source evidence trail.
+
+The static app lives in `docs/`. Rebuild its dataset after changing any CSV:
 
 ```bash
-pip install -r requirements.txt            # openpyxl (+ pymupdf for NVIDIA PDF datasheets)
+python scripts/build_web_data.py
+```
+
+## Command-line selector
+
+```bash
+pip install -r requirements.txt
 
 # Which hardware runs Qwen3 32B at Q4_K_M, 8K context, 1 user?
 python scripts/selector.py "Qwen3 32B"

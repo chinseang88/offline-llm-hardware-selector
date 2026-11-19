@@ -12,7 +12,8 @@ Repo layout (paths relative to the repo root; find it with `**/offline-llm-hardw
 | Path | Use |
 |---|---|
 | `scripts/selector.py` | Answer sizing questions (model → hardware, hardware → models) |
-| `scripts/verify_models.py` / `verify_gpus.py` / `verify_cpus.py` / `verify_misc.py` | Re-verify rows against primary sources → `out/*_evidence.{json,csv}` |
+| `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` after CSV edits |
+| `docs/index.html` | Interactive model/hardware fit page with source-evidence drawers |
 | `scripts/export_public_data.py`, `scripts/excel/*` | Workbook ↔ CSV round trip (only when the Excel workbook is available) |
 | `data/*.csv` | models, gpus, cpus, voice_models, quant + evidence log |
 | `references/conventions.md` | Sizing formulas, status legend, hybrid/MLA KV conventions |
@@ -22,7 +23,13 @@ Run scripts with the workspace Python (needs `openpyxl`; `pymupdf` optional for 
 
 ## Workflow A – answer a sizing / selection question
 
-1. Identify model, quantization (default `Q4_K_M`), context length (default 8192), concurrent users (default 1), vendor preference, and target tok/s (default 20). If the question names hardware instead of a model, use `--hw`.
+1. For visual, interactive browsing, serve the static app and use the controls in the page:
+   ```bash
+   python scripts/build_web_data.py
+   python -m http.server 8000 -d docs
+   ```
+   Open `http://localhost:8000`. The live public page is `https://chinseang88.github.io/offline-llm-hardware-selector/`.
+2. Identify model, quantization (default `Q4_K_M`), context length (default 8192), concurrent users (default 1), vendor preference, and target tok/s (default 20). If the question names hardware instead of a model, use `--hw`.
 2. Run, e.g.:
    ```
    python scripts/selector.py "Qwen3 32B" --quant Q4_K_M --context 8192 --users 1 --vendor Intel
