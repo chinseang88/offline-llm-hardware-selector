@@ -262,6 +262,16 @@ h1 { max-width: 780px; margin: 0; font-size: clamp(36px, 5vw, 72px); line-height
 .reference-note strong { font-size: 16px; }
 .reference-note p, .reference-note small { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .reference-note .drawer-links { margin-top: 10px; margin-bottom: 0; }
+.private-benchmark { margin: 0 0 24px; padding: 16px; border-left: 4px solid var(--teal); background: var(--teal-soft, #e7f2ef); }
+.private-benchmark-summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.private-benchmark-summary strong { font-size: 16px; }
+.private-benchmark-summary span, .private-benchmark > small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.private-run-list { display: grid; gap: 8px; margin: 12px 0; }
+.private-run-list article { display: grid; grid-template-columns: minmax(0, 1.5fr) 90px 90px; gap: 8px 12px; padding: 11px; background: var(--surface); border: 1px solid var(--line); }
+.private-run-list strong, .private-run-list b { display: block; font-family: var(--mono); font-size: 12px; }
+.private-run-list small { display: block; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.private-run-list p, .private-run-list a { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.private-run-list a { color: var(--blue); text-decoration: underline; }
 .fact-list { border-top: 1px solid var(--line); }
 .fact-row { display: grid; grid-template-columns: 140px 1fr; padding: 15px 0; border-bottom: 1px solid var(--line); gap: 15px; }
 .fact-row h3 { margin: 0; font-size: 13px; }

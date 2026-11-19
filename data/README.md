@@ -16,3 +16,5 @@ All files are UTF-8 CSV with a header row. Blank = unknown/not applicable. Units
 `Cell` in `evidence.csv` refers to the originating Excel workbook and can be ignored for CSV use.
 
 Column semantics (hybrid-model layer counting, MLA KV heads, unified-memory usable share, AMD usable PCIe lanes, etc.) are defined in `../skills/offline-llm-hardware-selector/references/conventions.md`.
+
+`data/reference_models.csv` contains only public model identity, tier, release, licence and source facts. Authenticated redacted benchmark exports are imported by `scripts/import_reference_catalog.py` into ignored `out/reference_private/`; the optional ignored `docs/private_reference.json` enables those 45+ measurement/audit tables only in the local preview.

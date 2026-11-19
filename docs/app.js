@@ -1,5 +1,6 @@
 const state = {
   data: null,
+  privateReference: null,
   model: null,
   bits: 4.85,
   context: 8192,
@@ -612,11 +613,27 @@ function openEvidence(row, kind) {
       content.append(lineage);
     }
 
-    const benchmarkFacts = facts.filter((fact) => /benchmark|tok\/s|throughput|latency|measured|ttft|decode/i.test(`${fact.Parameter} ${fact.Note} ${fact["Source type"]}`));
-    const benchmark = document.createElement("section");
-    benchmark.className = "benchmark-note";
-    benchmark.innerHTML = `<p class="section-label">Measured performance</p><strong>${benchmarkFacts.length ? `${benchmarkFacts.length} measured-performance records` : "No measured benchmark is stored for this model"}</strong><p>${benchmarkFacts.length ? "Open each record below for the measured machine, runtime, precision, workload, and source citation." : "The tok/s values in the selector are bandwidth-model estimates, not measurements. A benchmark is shown here only when the evidence record includes its test system and workload."}</p>`;
-    content.append(benchmark);
+    const privateRuns = privateRunsForModel(row);
+    if (privateRuns.length) {
+      const platformById = new Map(state.privateReference.platforms.map((platform) => [platform.platform_id, platform]));
+      const servingByRun = new Map(state.privateReference.serving.map((run) => [run.run_id, run]));
+      const benchmark = document.createElement("section");
+      benchmark.className = "private-benchmark";
+      const bestRuns = [...privateRuns].sort((a, b) => Number(b.decode_tps || 0) - Number(a.decode_tps || 0)).slice(0, 8);
+      benchmark.innerHTML = `<p class="section-label">Measured performance · local private evidence</p><div class="private-benchmark-summary"><strong>${privateRuns.length} measured runs</strong><span>${new Set(privateRuns.map((run) => run.platform_id)).size} platforms · quality, speed, timing, and provenance retained</span></div><div class="private-run-list">${bestRuns.map((run) => {
+        const platform = platformById.get(run.platform_id) || {};
+        const serving = servingByRun.get(run.run_id) || {};
+        const repo = serving.model_repo ? `https://huggingface.co/${escapeHtml(serving.model_repo)}${serving.model_revision ? `/tree/${escapeHtml(serving.model_revision)}` : ""}` : "";
+        return `<article><div><strong>${escapeHtml(run.model_id)}</strong><small>${escapeHtml(platform.device || platform.name || run.platform_id)} · ${escapeHtml(serving.engine || platform.runtime || "runtime pending")}</small></div><div><b>${decimal.format(Number(run.decode_tps))}</b><small>decode tok/s</small></div><div><b>${decimal.format(Number(run.overall), 3)}</b><small>overall quality</small></div><p>Measured on ${escapeHtml(platform.name || run.platform_id)} · ${escapeHtml(run.quant)} · context ${escapeHtml(serving.ctx || "not recorded")} · judge ${escapeHtml(run.judge_name || "not recorded")}</p>${repo ? `<a href="${repo}" target="_blank" rel="noreferrer">Exact HF revision ↗</a>` : ""}</article>`;
+      }).join("")}</div><small>This complete measured data is loaded from the ignored local reference database. It is not published because the source export is redacted/private.</small>`;
+      content.append(benchmark);
+    } else {
+      const benchmarkFacts = facts.filter((fact) => /benchmark|tok\/s|throughput|latency|measured|ttft|decode/i.test(`${fact.Parameter} ${fact.Note} ${fact["Source type"]}`));
+      const benchmark = document.createElement("section");
+      benchmark.className = "benchmark-note";
+      benchmark.innerHTML = `<p class="section-label">Measured performance</p><strong>${benchmarkFacts.length ? `${benchmarkFacts.length} measured-performance records` : "No public measured benchmark is available"}</strong><p>${benchmarkFacts.length ? "Open each record below for the measured machine, runtime, precision, workload, and source citation." : "The tok/s values in the selector are bandwidth-model estimates, not measurements. The reference site has private/redacted measurements; they are available locally only and omitted from the public build."}</p>`;
+      content.append(benchmark);
+    }
   }
 
   const sourceUrls = urlList(row["Source URL"]);
@@ -872,6 +889,64 @@ function normalizeReferenceName(value) {
 function referenceForModel(row) {
   const target = normalizeReferenceName(row.Model);
   return state.data.referenceModels.find((reference) => normalizeReferenceName(reference.Model) === target || normalizeReferenceName(reference.Family) === target) || null;
+}
+
+function privateRunsForModel(row) {
+  if (!state.privateReference) return [];
+  const reference = referenceForModel(row);
+  const targets = new Set([normalizeReferenceName(row.Model)]);
+  if (reference) {
+    targets.add(normalizeReferenceName(reference.Model));
+    targets.add(normalizeReferenceName(reference.Family));
+  }
+  return state.privateReference.quality.filter((run) => targets.has(normalizeReferenceName(run.family)));
+}
+
+function preparePrivateMeasurements(payload) {
+  const platforms = new Map(payload.platforms.map((row) => [row.platform_id, row]));
+  const serving = new Map(payload.serving.map((row) => [row.run_id, row]));
+  const measurements = payload.quality.map((run) => {
+    const platform = platforms.get(run.platform_id) || {};
+    const provenance = serving.get(run.run_id) || {};
+    const repo = provenance.model_repo || "";
+    const revision = provenance.model_revision || "";
+    return {
+      "Model": run.family,
+      "Quantization": run.quant,
+      "Measured on": platform.name || run.platform_id,
+      "Device": platform.device || "",
+      "Runtime": provenance.engine || platform.runtime || "",
+      "Context": provenance.ctx || "",
+      "Quality overall": run.overall,
+      "Quality CI low": run.overall_ci_lo,
+      "Quality CI high": run.overall_ci_hi,
+      "GSM8K": run.gsm8k,
+      "HumanEval": run.humaneval,
+      "Alpaca": run.alpaca,
+      "MeetingBank": run.meetingbank,
+      "Prefill tok/s": run.prefill_tps,
+      "Decode tok/s": run.decode_tps,
+      "Run wall (s)": run.mean_wall_s,
+      "Judge": run.judge_name,
+      "Model file": provenance.model_file || run.model_id,
+      "Model revision": revision,
+      "Model SHA256": provenance.model_sha256 || "",
+      "Source URL": repo && revision ? `https://huggingface.co/${repo}/tree/${revision}` : repo ? `https://huggingface.co/${repo}` : "",
+      "Evidence status": "MEASURED-INTERNAL / redacted export / public citation pending",
+    };
+  });
+  state.data.privateMeasurements = measurements;
+  state.data.privateFindings = payload.findings.map((row) => ({
+    "Finding": row.title, "Area": row.area, "Severity": row.severity, "Detail": row.detail,
+    "Evidence": row.evidence, "Source URL": "https://reimagined-adventure-l6zp8gm.pages.github.io/#briefing",
+    "Evidence status": "MEASURED-INTERNAL / private reference finding",
+  }));
+  state.data.privateIssues = payload.issues.map((row) => ({
+    "Issue": row.issue, "Category": row.category, "Severity": row.severity, "Run/source": row.source,
+    "Source URL": "https://reimagined-adventure-l6zp8gm.pages.github.io/#lineage",
+    "Evidence status": "MEASURED-INTERNAL / audit issue",
+  }));
+  return measurements;
 }
 
 function databaseRows() {
@@ -1157,6 +1232,23 @@ async function boot() {
     const response = await fetch("data.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`data.json returned ${response.status}`);
     state.data = await response.json();
+    try {
+      const privateResponse = await fetch("private_reference.json", { cache: "no-store" });
+      if (privateResponse.ok) {
+        state.privateReference = await privateResponse.json();
+        const measurements = preparePrivateMeasurements(state.privateReference);
+        const select = byId("database-select");
+        select.add(new Option(`Private Measurements (${measurements.length})`, "privateMeasurements"));
+        select.add(new Option(`Private Findings (${state.data.privateFindings.length})`, "privateFindings"));
+        select.add(new Option(`Private Issues (${state.data.privateIssues.length})`, "privateIssues"));
+        const friendlyName = (name) => name.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+        for (const [name, rows] of Object.entries(state.privateReference.tables || {})) {
+          const key = `private_${name}`;
+          state.data[key] = rows.map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, value !== null && typeof value === "object" ? JSON.stringify(value) : value])));
+          select.add(new Option(`Private ${friendlyName(name)} (${rows.length})`, key));
+        }
+      }
+    } catch { state.privateReference = null; }
     try {
       const parityResponse = await fetch("parity.json", { cache: "no-store" });
       if (parityResponse.ok) state.parity = await parityResponse.json();

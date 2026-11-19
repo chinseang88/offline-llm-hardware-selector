@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
+PRIVATE_OUT = ROOT / "out" / "reference_private"
 REFERENCE_FIELDS = [
     "Model", "Tier", "Reference rank", "Family", "Vendor", "Total params (B)",
     "Active params (B)", "Architecture", "License", "License class",
@@ -50,10 +51,48 @@ def public_facts(model, family):
     return facts
 
 
+def write_private_table(payload, name):
+    rows = payload.get(name)
+    if not isinstance(rows, list) or not rows:
+        return 0
+    fields = list(dict.fromkeys(key for row in rows for key in row))
+    with (PRIVATE_OUT / f"{name}.csv").open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(rows)
+
+
 def import_catalog(input_path: Path):
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     if not payload.get("meta", {}).get("redacted"):
         raise ValueError("Expected a redacted authenticated export; refusing to import without its disclosure marker")
+
+    PRIVATE_OUT.mkdir(parents=True, exist_ok=True)
+    private_tables = [
+        name for name, value in payload.items()
+        if isinstance(value, list) and value and isinstance(value[0], dict)
+    ]
+    private_counts = {name: write_private_table(payload, name) for name in private_tables}
+    (PRIVATE_OUT / "meta.json").write_text(json.dumps(payload.get("meta", {}), ensure_ascii=False, indent=2), encoding="utf-8")
+    (PRIVATE_OUT / "manifest.json").write_text(json.dumps({"source": str(input_path), "redacted": True, "tables": private_counts}, ensure_ascii=False, indent=2), encoding="utf-8")
+    local_payload = {
+        "private": True,
+        "meta": payload.get("meta", {}),
+        "platforms": payload.get("platforms", []),
+        "quality": payload.get("quality_all", []),
+        "timing": payload.get("cohort_timing_summary", []),
+        "serving": payload.get("run_serving", []),
+        "kv": payload.get("kv_cache", []),
+        "findings": payload.get("findings", []),
+        "issues": payload.get("issues", []),
+        "tables": {
+            name: ([{k: v for k, v in row.items() if k != "html"} for row in value] if name == "documents" else value)
+            for name, value in payload.items()
+            if isinstance(value, list) and value and isinstance(value[0], dict)
+        },
+    }
+    (ROOT / "docs" / "private_reference.json").write_text(json.dumps(local_payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
     families = {clean(row.get("family")): row for row in payload.get("families", [])}
     rows = []
@@ -111,7 +150,8 @@ def import_catalog(input_path: Path):
         writer.writerows(retained + evidence)
 
     print(f"wrote {len(rows)} public reference model rows and {len(evidence)} verified facts")
-    print("excluded: private benchmarks, host measurements, timing, quality scores, memory runs, issues, and withheld sources")
+    print(f"wrote {sum(private_counts.values())} private records across {len(private_counts)} tables under {PRIVATE_OUT}")
+    print("private records include measured results, exact machine/runtime lineage, timing, KV memory, findings, issues, and withheld sources; ignored by git")
 
 
 def main():

@@ -28,6 +28,8 @@ The static app lives in `docs/`. Rebuild its dataset after changing any CSV:
 python scripts/build_web_data.py
 ```
 
+With access to the authenticated Client Edge AI reference export, `scripts/import_reference_catalog.py` imports 75 public model rows and 300 public source checks. It also preserves every structured reference record locally under ignored `out/reference_private/` and builds an ignored `docs/private_reference.json`; the local Database view then exposes private leaderboard, timing, runtime, KV, drafter, platform, source-lineage, docs, findings and issue tables. Private/redacted measurements never enter Git or GitHub Pages.
+
 ## Command-line selector
 
 ```bash
