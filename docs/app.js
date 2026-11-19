@@ -408,10 +408,15 @@ function hardwareComparator(a, b) {
   if (mode === "memory-desc") primary = compareNumber(a.memory, b.memory, "desc");
   else if (mode === "memory-asc") primary = compareNumber(a.memory, b.memory, "asc");
   else if (mode === "bandwidth-desc") primary = compareNumber(a.bandwidth, b.bandwidth, "desc");
+  else if (mode === "bandwidth-asc") primary = compareNumber(a.bandwidth, b.bandwidth, "asc");
   else if (mode === "power-asc") primary = compareNumber(a.power, b.power, "asc");
+  else if (mode === "power-desc") primary = compareNumber(a.power, b.power, "desc");
   else if (mode === "name-asc") primary = String(a.name).localeCompare(String(b.name));
+  else if (mode === "name-desc") primary = String(b.name).localeCompare(String(a.name));
   else if (mode === "vendor-asc") primary = String(a.vendor).localeCompare(String(b.vendor));
   else if (mode === "evidence-desc") primary = evidenceScore(b.evidence) - evidenceScore(a.evidence);
+  else if (mode === "evidence-asc") primary = evidenceScore(a.evidence) - evidenceScore(b.evidence);
+  else if (mode === "speed-asc") primary = compareNumber(a.speed, b.speed, "asc");
   else primary = compareNumber(a.speed, b.speed, "desc");
   if (primary) return primary;
   return String(a.name).localeCompare(String(b.name));
@@ -493,9 +498,21 @@ function vendorInitial(vendor, name) {
   return String(vendor || "CPU").slice(0, 2).toUpperCase();
 }
 
+function updateColumnSortButtons() {
+  for (const button of $$(".column-sort")) {
+    const mode = button.dataset.sortGroup === "hardware" ? state.hardwareSort : state.modelSort;
+    const [prefix, direction] = mode.split("-");
+    const active = prefix === button.dataset.sortPrefix;
+    button.classList.toggle("active", active);
+    button.querySelector("b").textContent = active ? (direction === "asc" ? "↑" : "↓") : "↕";
+    button.setAttribute("aria-sort", active ? (direction === "asc" ? "ascending" : "descending") : "none");
+  }
+}
+
 function renderRows() {
   const host = byId("results");
   const rows = filteredRows();
+  updateColumnSortButtons();
   byId("hardware-sort-output").textContent = `Sorted by ${byId("hardware-sort").selectedOptions[0].textContent} · ${rows.length} shown`;
   host.replaceChildren();
   if (!rows.length) {
@@ -719,8 +736,13 @@ function modelComparator(a, b) {
   else if (mode === "need-asc") primary = compareNumber(a.need, b.need, "asc");
   else if (mode === "need-desc") primary = compareNumber(a.need, b.need, "desc");
   else if (mode === "name-asc") primary = String(a.model.Model).localeCompare(String(b.model.Model));
+  else if (mode === "name-desc") primary = String(b.model.Model).localeCompare(String(a.model.Model));
   else if (mode === "vendor-asc") primary = String(a.model.Vendor).localeCompare(String(b.model.Vendor));
+  else if (mode === "architecture-asc") primary = String(a.model["Runtime arch"]).localeCompare(String(b.model["Runtime arch"]));
+  else if (mode === "architecture-desc") primary = String(b.model["Runtime arch"]).localeCompare(String(a.model["Runtime arch"]));
   else if (mode === "evidence-desc") primary = evidenceScore(b.model["Evidence status"]) - evidenceScore(a.model["Evidence status"]);
+  else if (mode === "evidence-asc") primary = evidenceScore(a.model["Evidence status"]) - evidenceScore(b.model["Evidence status"]);
+  else if (mode === "speed-asc") primary = compareNumber(a.speed, b.speed, "asc");
   else primary = compareNumber(a.speed, b.speed, "desc");
   if (primary) return primary;
   return String(a.model.Model).localeCompare(String(b.model.Model));
@@ -744,6 +766,7 @@ function renderHardwareView() {
   const item = currentHardwareItem();
   const capacity = hardwareMemory(item);
   const rows = compatibleModels(item);
+  updateColumnSortButtons();
   const fits = compatibleModels(item).filter((row) => row.fits).length;
   byId("model-sort-output").textContent = `Sorted by ${byId("model-sort").selectedOptions[0].textContent} · ${rows.length} shown`;
   const source = item.raw["Source URL"] || "";
@@ -964,6 +987,18 @@ function bindEvents() {
   byId("legacy-toggle").addEventListener("click", () => { state.legacy = !state.legacy; byId("legacy-toggle").setAttribute("aria-pressed", String(state.legacy)); render(); });
   byId("fit-filter").addEventListener("change", (event) => { state.filter = event.target.value; renderRows(); });
   byId("hardware-sort").addEventListener("change", (event) => { state.hardwareSort = event.target.value; renderRows(); });
+  const columnDefaults = { name: "asc", memory: "desc", power: "asc", speed: "desc", evidence: "desc", need: "asc", architecture: "asc" };
+  for (const button of $$(".column-sort")) button.addEventListener("click", () => {
+    const group = button.dataset.sortGroup;
+    const prefix = button.dataset.sortPrefix;
+    const select = byId(group === "hardware" ? "hardware-sort" : "model-sort");
+    const current = group === "hardware" ? state.hardwareSort : state.modelSort;
+    const [currentPrefix, currentDirection] = current.split("-");
+    const direction = currentPrefix === prefix ? (currentDirection === "asc" ? "desc" : "asc") : columnDefaults[prefix];
+    select.value = `${prefix}-${direction}`;
+    if (!select.value) return;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
   $$(".view-switcher button").forEach((button) => button.addEventListener("click", () => {
     state.view = button.dataset.view;
     $$(".view-switcher button").forEach((item) => item.classList.toggle("active", item === button));

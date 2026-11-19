@@ -143,6 +143,10 @@ h1 { max-width: 780px; margin: 0; font-size: clamp(36px, 5vw, 72px); line-height
 .comparison { margin-top: 1px; }
 .table-head, .result-row { display: grid; grid-template-columns: minmax(250px, 1.35fr) minmax(210px, 1.1fr) minmax(175px, .8fr) .5fr 145px; gap: 22px; align-items: center; }
 .table-head { padding: 14px 18px 11px; color: var(--muted); font-family: var(--mono); font-size: 10px; border-bottom: 1px solid var(--line); }
+.column-sort { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 7px; margin: -4px -7px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.column-sort b { color: var(--teal); font-family: var(--mono); font-size: 13px; line-height: 1; }
+.column-sort:hover, .column-sort:focus-visible { background: var(--lime-soft); color: var(--ink); outline: 0; }
+.column-sort.active { color: var(--ink); font-weight: 600; }
 .result-row { min-height: 92px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: transparent; transition: background .15s ease; }
 .result-row:hover { background: rgb(255 255 255 / 62%); }
 .hardware-cell { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -270,7 +274,7 @@ dialog p:not(.section-label) { line-height: 1.55; color: var(--muted); }
   .control:nth-child(n+4) { border-top: 1px solid var(--line); }
   .summary-layout { grid-template-columns: 1fr 220px; }
   .table-head, .result-row { grid-template-columns: minmax(220px, 1.2fr) minmax(190px, 1fr) minmax(150px, .8fr) 110px; }
-  .table-head span:nth-child(4), .power-cell { display: none; }
+  .table-head > .column-sort:nth-child(4), .power-cell { display: none; }
 }
 @media (max-width: 760px) {
   .site-header { height: 57px; padding: 0 16px; }

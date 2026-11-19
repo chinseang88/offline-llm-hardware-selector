@@ -8,9 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261119-sort">
+  <link rel="stylesheet" href="styles.css?v=20261119-columns">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="app.js?v=20261119-sort" defer></script>
+  <script src="app.js?v=20261119-columns" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -143,14 +143,14 @@
         </div>
         <div class="result-filters">
           <label class="result-filter"><i data-lucide="filter"></i><span>Show</span><select id="fit-filter"><option value="all">All hardware</option><option value="fits" selected>Fits in memory</option><option value="fast">Meets speed target</option></select></label>
-          <label class="result-filter"><i data-lucide="arrow-up-down"></i><span>Sort</span><select id="hardware-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="memory-desc">Usable memory: high to low</option><option value="memory-asc">Usable memory: low to high</option><option value="bandwidth-desc">Bandwidth: high to low</option><option value="power-asc">Power: low to high</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label>
+          <label class="result-filter"><i data-lucide="arrow-up-down"></i><span>Sort</span><select id="hardware-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="memory-desc">Usable memory: high to low</option><option value="memory-asc">Usable memory: low to high</option><option value="bandwidth-desc">Bandwidth: high to low</option><option value="power-asc">Power: low to high</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option><option value="speed-asc">Decode tok/s: low to high</option><option value="power-desc">Power: high to low</option><option value="name-desc">Name: Z to A</option><option value="evidence-asc">Evidence quality: low to high</option></select></label>
         </div>
         <output class="sort-output" id="hardware-sort-output" aria-live="polite"></output>
       </div>
 
       <section class="comparison" aria-label="Hardware fit comparison">
         <div class="table-head" id="table-head">
-          <span>Hardware</span><span>Memory fit</span><span>Decode estimate</span><span>Power</span><span>Evidence</span>
+          <button class="column-sort" data-sort-group="hardware" data-sort-prefix="name"><span>Hardware</span><b>↕</b></button><button class="column-sort" data-sort-group="hardware" data-sort-prefix="memory"><span>Memory fit</span><b>↕</b></button><button class="column-sort" data-sort-group="hardware" data-sort-prefix="speed"><span>Decode estimate</span><b>↕</b></button><button class="column-sort" data-sort-group="hardware" data-sort-prefix="power"><span>Power</span><b>↕</b></button><button class="column-sort" data-sort-group="hardware" data-sort-prefix="evidence"><span>Evidence</span><b>↕</b></button>
         </div>
         <div id="results" class="results" aria-live="polite"></div>
       </section>
@@ -189,8 +189,8 @@
         <div class="profile-note" id="hardware-profile-note"></div>
       </details>
       <div class="hardware-summary" id="hardware-summary"></div>
-      <div class="sort-panel"><label><i data-lucide="arrow-up-down"></i><span>Sort runnable models</span><select id="model-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="total-desc">Total params: high to low</option><option value="active-desc">Active params: high to low</option><option value="need-asc">Memory need: low to high</option><option value="need-desc">Memory need: high to low</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option></select></label><output class="sort-output" id="model-sort-output" aria-live="polite"></output></div>
-      <section class="comparison"><div class="table-head model-table-head"><span>Model</span><span>Memory need</span><span>Decode estimate</span><span>Architecture</span><span>Evidence</span></div><div id="hardware-model-results" class="results" aria-live="polite"></div></section>
+      <div class="sort-panel"><label><i data-lucide="arrow-up-down"></i><span>Sort runnable models</span><select id="model-sort"><option value="speed-desc">Decode tok/s: high to low</option><option value="total-desc">Total params: high to low</option><option value="active-desc">Active params: high to low</option><option value="need-asc">Memory need: low to high</option><option value="need-desc">Memory need: high to low</option><option value="name-asc">Name: A to Z</option><option value="vendor-asc">Vendor then name</option><option value="evidence-desc">Evidence quality</option><option value="speed-asc">Decode tok/s: low to high</option><option value="name-desc">Name: Z to A</option><option value="architecture-asc">Architecture: A to Z</option><option value="architecture-desc">Architecture: Z to A</option><option value="evidence-asc">Evidence quality: low to high</option></select></label><output class="sort-output" id="model-sort-output" aria-live="polite"></output></div>
+      <section class="comparison"><div class="table-head model-table-head"><button class="column-sort" data-sort-group="model" data-sort-prefix="name"><span>Model</span><b>↕</b></button><button class="column-sort" data-sort-group="model" data-sort-prefix="need"><span>Memory need</span><b>↕</b></button><button class="column-sort" data-sort-group="model" data-sort-prefix="speed"><span>Decode estimate</span><b>↕</b></button><button class="column-sort" data-sort-group="model" data-sort-prefix="architecture"><span>Architecture</span><b>↕</b></button><button class="column-sort" data-sort-group="model" data-sort-prefix="evidence"><span>Evidence</span><b>↕</b></button></div><div id="hardware-model-results" class="results" aria-live="polite"></div></section>
     </section>
 
     <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
