@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from common import ROOT, load_rows
+from selector_parity import calculate as calculate_parity
 
 DOCS = ROOT / "docs"
 NUMERIC = {
@@ -45,7 +46,10 @@ def main():
     }
     output = DOCS / "data.json"
     output.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    parity_output = DOCS / "parity.json"
+    parity_output.write_text(json.dumps(calculate_parity(), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"wrote {output} ({output.stat().st_size / 1024:.1f} KiB)")
+    print(f"wrote {parity_output} ({parity_output.stat().st_size / 1024:.1f} KiB)")
     print(f"rows: {len(payload['models'])} models, {len(payload['gpus'])} GPUs, {len(payload['cpus'])} CPUs, {len(evidence)} evidence checks")
 
 

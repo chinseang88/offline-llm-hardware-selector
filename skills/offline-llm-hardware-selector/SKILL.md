@@ -12,8 +12,8 @@ Repo layout (paths relative to the repo root; find it with `**/offline-llm-hardw
 | Path | Use |
 |---|---|
 | `scripts/selector.py` | Answer sizing questions (model → hardware, hardware → models) |
-| `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` after CSV edits |
-| `docs/index.html` | Interactive model/hardware fit page with source-evidence drawers |
+| `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` and Excel-parity audit in `docs/parity.json` after CSV edits |
+| `scripts/selector_parity.py` | Quantify web/CLI vs Excel memory and throughput formulas for 8K/32K workloads |
 | `scripts/export_public_data.py`, `scripts/excel/*` | Workbook ↔ CSV round trip (only when the Excel workbook is available) |
 | `data/*.csv` | models, gpus, cpus, voice_models, quant + evidence log |
 | `references/conventions.md` | Sizing formulas, status legend, hybrid/MLA KV conventions |

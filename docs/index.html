@@ -18,16 +18,18 @@
       <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
       <span>Model Fit</span>
     </a>
-    <nav class="header-nav" aria-label="Page sections">
-      <a href="#compare">Compare</a>
-      <a href="#method">Method</a>
+    <nav class="header-nav" aria-label="Application views">
+      <button class="nav-page active" data-page="model">Model → Hardware</button>
+      <button class="nav-page" data-page="hardware">Hardware → Models</button>
+      <button class="nav-page" data-page="database">Database</button>
+      <button class="nav-page" data-page="evidence">Evidence</button>
       <a href="https://github.com/chinseang88/offline-llm-hardware-selector" target="_blank" rel="noreferrer">GitHub</a>
     </nav>
     <button class="icon-button" id="open-about" aria-label="About these estimates" title="About these estimates"><i data-lucide="info"></i></button>
   </header>
 
   <main>
-    <section class="workspace" id="compare" aria-labelledby="page-title">
+    <section class="workspace page-view active" id="model-page" aria-labelledby="page-title">
       <div class="workspace-heading">
         <div>
           <p class="kicker">Offline LLM sizing desk</p>
@@ -74,6 +76,14 @@
         </label>
       </div>
 
+      <div class="secondary-filters">
+        <button class="intel-only" id="intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button>
+        <label>Model vendor <select id="model-vendor-filter"><option value="all">All</option></select></label>
+        <label>Model type <select id="model-type-filter"><option value="all">All</option></select></label>
+        <label>Minimum GPU memory <select id="min-memory-filter"><option value="0">Any</option><option value="8">8 GB</option><option value="12">12 GB</option><option value="16">16 GB</option><option value="24">24 GB</option><option value="48">48 GB</option><option value="96">96 GB</option></select></label>
+        <label>Maximum board power <select id="max-power-filter"><option value="0">Any</option><option value="75">75 W</option><option value="150">150 W</option><option value="250">250 W</option><option value="400">400 W</option><option value="600">600 W</option></select></label>
+      </div>
+
       <div class="summary-layout">
         <section class="fit-summary" aria-labelledby="model-summary-title">
           <div class="summary-topline">
@@ -100,6 +110,7 @@
               <span><i class="swatch kv"></i>KV cache <b id="kv-label">—</b></span>
               <span><i class="swatch runtime"></i>Runtime <b id="runtime-label">—</b></span>
             </div>
+            <div class="memory-parity" id="memory-parity"></div>
           </div>
         </section>
 
@@ -124,7 +135,33 @@
         </div>
         <div id="results" class="results" aria-live="polite"></div>
       </section>
-      <p class="table-note"><i data-lucide="activity"></i> Decode speed is a bandwidth model, not a benchmark. Validate runtime, thermals, kernels, and batch behavior on target hardware.</p>
+      <p class="table-note"><i data-lucide="activity"></i> Decode speed is a bandwidth model, not a benchmark. Excel parity is shown using the workbook’s full-KV denominator and runtime-specific efficiency.</p>
+    </section>
+
+    <section class="workspace page-view" id="hardware-page" aria-labelledby="hardware-page-title" hidden>
+      <div class="workspace-heading"><div><p class="kicker">Hardware-led selector</p><h1 id="hardware-page-title">Start with the machine. See the models.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Single-device compatibility view</span></div></div>
+      <div class="control-strip hardware-controls">
+        <label class="control hardware-search-control"><span>Hardware</span><span class="select-wrap"><input id="hardware-search" type="search" value="Intel Arc Pro B60" autocomplete="off" aria-controls="hardware-menu" aria-expanded="false"><i data-lucide="search"></i></span><div class="search-menu" id="hardware-menu" role="listbox" hidden></div></label>
+        <label class="control"><span>Quantization</span><select id="hardware-quant-select"></select></label>
+        <label class="control"><span>Context</span><select id="hardware-context-select"><option value="4096">4K</option><option value="8192" selected>8K</option><option value="16384">16K</option><option value="32768">32K</option><option value="65536">64K</option><option value="131072">128K</option></select></label>
+        <label class="control"><span>Users</span><select id="hardware-user-select"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
+        <label class="control"><span>Target tok/s</span><input id="hardware-target-input" type="number" min="1" max="200" value="20"></label>
+      </div>
+      <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label></div>
+      <div class="hardware-summary" id="hardware-summary"></div>
+      <section class="comparison"><div class="table-head model-table-head"><span>Model</span><span>Memory need</span><span>Decode estimate</span><span>Architecture</span><span>Evidence</span></div><div id="hardware-model-results" class="results" aria-live="polite"></div></section>
+    </section>
+
+    <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
+      <div class="workspace-heading"><div><p class="kicker">Public source tables</p><h1 id="database-title">The database, without hiding the fields.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Read-only CSV mirror</span></div></div>
+      <div class="data-toolbar"><label>Table <select id="database-select"><option value="models">Models (170)</option><option value="gpus">GPUs (94)</option><option value="cpus">CPUs (41)</option><option value="quants">Quantization</option></select></label><label class="database-search"><i data-lucide="search"></i><input id="database-search" type="search" placeholder="Search this table"></label><button class="secondary-button" id="download-table"><i data-lucide="download"></i> Download CSV</button></div>
+      <div class="data-table-wrap"><table id="database-table"></table></div>
+    </section>
+
+    <section class="workspace page-view data-page" id="evidence-page" aria-labelledby="evidence-title" hidden>
+      <div class="workspace-heading"><div><p class="kicker">Fact-check ledger</p><h1 id="evidence-title">Every parameter, its source, and its status.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span id="evidence-count">Loading checks…</span></div></div>
+      <div class="evidence-toolbar"><button class="status-filter active" data-status="all">All</button><button class="status-filter" data-status="VERIFIED">Verified</button><button class="status-filter" data-status="MISMATCH">Corrected</button><button class="status-filter" data-status="DERIVED/ESTIMATE">Derived</button><button class="status-filter" data-status="OTHER">Review / missing</button><label class="database-search"><i data-lucide="search"></i><input id="evidence-search" type="search" placeholder="Search item, parameter, note, or URL"></label><a class="secondary-button" href="https://raw.githubusercontent.com/chinseang88/offline-llm-hardware-selector/main/data/evidence.csv" download><i data-lucide="download"></i> Download evidence</a></div>
+      <div id="evidence-results" class="evidence-results"></div>
     </section>
 
     <section class="method-section" id="method" aria-labelledby="method-title">
@@ -132,6 +169,7 @@
         <p class="section-label">One calculation, visible assumptions</p>
         <h2 id="method-title">No black-box recommendation.</h2>
         <p>Every comparison is calculated in the browser from the same public CSV rows used by the command-line tool. Open any source-backed hardware or model row to inspect the values behind it.</p>
+        <div class="parity-audit" id="parity-audit"><p class="section-label">Excel formula audit</p><div id="parity-audit-content">Loading aggregate delta…</div></div>
       </div>
       <div class="formula-grid">
         <article><span>01</span><h3>Weights</h3><code>params × bpw / 8 × 1.03</code><p>The total checkpoint payload plus a 3% tensor and metadata allowance.</p></article>
