@@ -44,7 +44,6 @@ const state = {
   gpuQuantity: 1,
   hostCpu: null,
   hostRam: 0,
-  maxCpuPower: 500,
   pcieWidth: "Auto",
   preferredGpu: null,
   deviceVram: 0,
@@ -258,6 +257,24 @@ function syncHardwareGpuMemory(gpu) {
   state.hardwareVram = setSkuMemoryOption(byId("hardware-vram-input"), gpu["Memory (GB)"], "GPU");
 }
 
+function cpuPowerText(cpu) {
+  if (!cpu) return "Select a host CPU";
+  return `${cpu["Base / default power (W)"]} W base · ${cpu["Max turbo / max power (W)"]} W max`;
+}
+
+function gpuPowerText(gpu, quantity = 1) {
+  if (!gpu) return "Select a GPU";
+  const perCard = Number(gpu["TDP / board power (W)"]);
+  return quantity > 1 ? `${perCard} W each · ${perCard * quantity} W total (${quantity}×)` : `${perCard} W TDP`;
+}
+
+function updatePowerReadouts() {
+  byId("cpu-power-output").textContent = cpuPowerText(state.hostCpu);
+  byId("gpu-power-output").textContent = gpuPowerText(state.preferredGpu, state.gpuQuantity);
+  byId("hardware-cpu-power-output").textContent = cpuPowerText(state.hardwareCpu);
+  byId("hardware-gpu-power-output").textContent = gpuPowerText(state.hardwareGpu, state.hardwareGpuQuantity);
+}
+
 function selectGlobalGpu(gpu, { renderHardware = true } = {}) {
   if (!gpu) {
     state.preferredGpu = null;
@@ -326,7 +343,6 @@ function hardwareRows() {
     return state.data.cpus
       .filter((row) => cleanNumber(row["Max RAM (GB)"]) && cleanNumber(row["Memory BW (GB/s)"]))
       .filter((row) => !state.intelOnly || isIntelHardware(row, "cpu"))
-      .filter((row) => Number(row["Base / default power (W)"]) <= state.maxCpuPower)
       .filter((row) => state.pcieWidth === "Auto" || Number(row["CPU PCIe lanes"]) >= Number((state.pcieWidth.match(/\d+/) || [0])[0]) * state.gpuQuantity)
       .map((row) => ({
         raw: row,
@@ -524,6 +540,7 @@ function escapeHtml(value) {
 
 function render() {
   if (!state.model) return;
+  updatePowerReadouts();
   renderSummary();
   renderRows();
 }
@@ -720,6 +737,7 @@ function compatibleModels(item) {
 
 function renderHardwareView() {
   if (!state.hardware) return;
+  updatePowerReadouts();
   const item = currentHardwareItem();
   const capacity = hardwareMemory(item);
   const rows = compatibleModels(item);
@@ -922,7 +940,7 @@ function bindEvents() {
     ["runtime-select", "runtime", render], ["task-select", "task", render], ["kv-bits-select", "kvBits", render],
     ["prompt-length-input", "promptTokens", render], ["answer-length-input", "answerTokens", render],
     ["offload-select", "offload", render], ["gpu-quantity-input", "gpuQuantity", render],
-    ["cpu-power-input", "maxCpuPower", render], ["pcie-width-select", "pcieWidth", render], ["device-vram-input", "deviceVram", render]
+    ["pcie-width-select", "pcieWidth", render], ["device-vram-input", "deviceVram", render]
   ];
   for (const [id, key, callback] of profileInputs) byId(id).addEventListener("input", (event) => { state[key] = typeof state[key] === "number" ? Number(event.target.value) : event.target.value; callback(); });
   byId("host-cpu-select").addEventListener("change", (event) => { selectGlobalCpu(state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null, { renderHardware: state.page === "hardware" }); render(); });

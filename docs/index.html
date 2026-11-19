@@ -90,7 +90,8 @@
           <label>GPU quantity<select id="gpu-quantity-input"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
           <label>Host CPU<select id="host-cpu-select"><option value="">Auto / none</option></select></label>
           <label>Installed host RAM (auto-paired to CPU)<select id="host-ram-input"><option value="0">From CPU</option><option>8</option><option>16</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>384</option><option>512</option><option>768</option><option>1024</option><option>2048</option></select></label>
-          <label>Maximum CPU base power (W)<select id="cpu-power-input"><option>6</option><option>10</option><option>15</option><option>25</option><option>28</option><option>45</option><option>55</option><option>65</option><option>125</option><option>150</option><option>175</option><option>250</option><option selected>500</option></select></label>
+          <label>Selected CPU power<output id="cpu-power-output">Select a host CPU</output></label>
+          <label>Selected GPU power<output id="gpu-power-output">Select a GPU</output></label>
           <label>PCIe width<select id="pcie-width-select"><option>Auto</option><option>x16 per card</option><option>x8 per card (minimum)</option></select></label>
           <label>Shared GPU selection<select id="preferred-gpu-select"><option value="">No preference — show all GPUs</option></select></label>
           <label>Device VRAM (auto-paired to GPU)<select id="device-vram-input"><option value="0">Catalog VRAM</option><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
@@ -173,6 +174,8 @@
           <label>GPU (shared selection)<select id="hardware-gpu-select"></select></label>
           <label>GPU VRAM (auto-paired to GPU)<select id="hardware-vram-input"><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
           <label>GPU quantity<select id="hardware-gpu-quantity-input"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
+          <label>Selected CPU power<output id="hardware-cpu-power-output">—</output></label>
+          <label>Selected GPU power<output id="hardware-gpu-power-output">—</output></label>
           <label>Runtime / library<select id="hardware-runtime-select"><option>llama.cpp</option><option>Ollama</option><option>LM Studio</option><option>vLLM</option><option>SGLang</option><option>TensorRT-LLM</option><option>ExLlamaV2 / V3</option><option>MLX / mlx-lm</option><option>OpenVINO GenAI</option><option>IPEX-LLM</option></select></label>
           <label>Primary application<select id="hardware-task-select"><option>General chat / Q&A</option><option>RAG / document Q&A</option><option>Coding</option><option>Maths / reasoning</option><option>Agents / tool calling</option><option>Vision (image + text)</option><option>Classification / extraction</option><option>Translation / multilingual</option></select></label>
           <label>KV-cache bits<select id="hardware-kv-bits-select"><option value="4">4-bit</option><option value="8" selected>8-bit</option><option value="16">16-bit FP16</option></select></label>
