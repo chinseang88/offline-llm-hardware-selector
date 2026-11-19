@@ -21,7 +21,31 @@ const state = {
   hardwareContext: 8192,
   hardwareUsers: 1,
   hardwareTarget: 20,
+  hardwareCpu: null,
+  hardwareGpu: null,
+  hardwareRam: 0,
+  hardwareVram: 0,
+  hardwareGpuQuantity: 1,
+  hardwareRuntime: "llama.cpp",
+  hardwareTask: "General chat / Q&A",
+  hardwareKvBits: 8,
+  hardwareOffload: "Y",
+  hardwareMemoryHeadroom: 10,
+  hardwareBandwidthUtil: 100,
   evidenceStatus: "all",
+  runtime: "llama.cpp",
+  task: "General chat / Q&A",
+  kvBits: 8,
+  promptTokens: 2048,
+  answerTokens: 256,
+  offload: "N",
+  gpuQuantity: 1,
+  hostCpu: null,
+  hostRam: 0,
+  maxCpuPower: 500,
+  pcieWidth: "Auto",
+  preferredGpu: null,
+  deviceVram: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -69,14 +93,15 @@ function evidenceShort(text) {
   return "Review source";
 }
 
-function kvPerTokenGb(model) {
-  return 2 * Number(model.Layers) * Number(model["KV heads"]) * Number(model["Head dim"]) * 2 / 1e9;
+function kvPerTokenGb(model, bits = state.kvBits) {
+  return 2 * Number(model.Layers) * Number(model["KV heads"]) * Number(model["Head dim"]) * bits / 8 / 1e9;
 }
 
 function memoryNeed(model) {
   const weights = Number(model["Total params (B)"]) * state.bits / 8 * 1.03;
-  const kv = kvPerTokenGb(model) * state.context * state.users;
-  return { weights, kv, runtime: 1.5, total: weights + kv + 1.5 };
+  const kv = kvPerTokenGb(model, state.kvBits) * state.context * state.users;
+  const overhead = weights * 0.07;
+  return { weights, kv, runtime: overhead, total: weights + kv + overhead };
 }
 
 function excelMemoryNeed(model, bits = state.bits, context = state.context, users = state.users) {
@@ -86,24 +111,63 @@ function excelMemoryNeed(model, bits = state.bits, context = state.context, user
   return { weights, kv, runtime, total: weights + kv + runtime };
 }
 
-function efficiency(vendor, cpu = false) {
-  if (cpu || vendor === "Intel") return 0.55;
-  if (vendor === "Apple") return 0.65;
-  return 0.6;
+const runtimeEfficiency = {
+  "llama.cpp": { NVIDIA: 0.65, AMD: 0.60, Intel: 0.50, Apple: 0.65, CPU: 0.55, Jetson: 0.60 },
+  "Ollama": { NVIDIA: 0.62, AMD: 0.58, Intel: 0.45, Apple: 0.62, CPU: 0.52, Jetson: 0.58 },
+  "LM Studio": { NVIDIA: 0.62, AMD: 0.58, Intel: 0.45, Apple: 0.65, CPU: 0.52, Jetson: 0 },
+  "vLLM": { NVIDIA: 0.75, AMD: 0.70, Intel: 0.55, Apple: 0, CPU: 0.40, Jetson: 0.60 },
+  "SGLang": { NVIDIA: 0.75, AMD: 0.70, Intel: 0, Apple: 0, CPU: 0, Jetson: 0 },
+  "TensorRT-LLM": { NVIDIA: 0.80, AMD: 0, Intel: 0, Apple: 0, CPU: 0, Jetson: 0.70 },
+  "ExLlamaV2 / V3": { NVIDIA: 0.75, AMD: 0.65, Intel: 0, Apple: 0, CPU: 0, Jetson: 0 },
+  "MLX / mlx-lm": { NVIDIA: 0, AMD: 0, Intel: 0, Apple: 0.70, CPU: 0, Jetson: 0 },
+  "OpenVINO GenAI": { NVIDIA: 0, AMD: 0, Intel: 0.60, Apple: 0, CPU: 0.55, Jetson: 0 },
+  "IPEX-LLM": { NVIDIA: 0, AMD: 0, Intel: 0.58, Apple: 0, CPU: 0.50, Jetson: 0 },
+};
+
+function efficiency(vendor, cpu = false, hardware = null) {
+  const profile = runtimeEfficiency[state.runtime] || runtimeEfficiency["llama.cpp"];
+  if (cpu) {
+    if (hardware && /Jetson/.test(hardware["CPU / platform"] || "")) return profile.Jetson;
+    return profile.CPU;
+  }
+  return profile[vendor] ?? 0;
+}
+
+const taskRules = {
+  "General chat / Q&A": { base: 4.85, small: 4.85, large: 4.85, note: "Q4_K_M is the baseline for chat." },
+  "RAG / document Q&A": { base: 5.7, small: 8.5, large: 4.85, note: "RAG needs enough precision to preserve grounded facts." },
+  "Coding": { base: 5.7, small: 8.5, large: 4.85, note: "Small coders need Q8; >=30B can use Q4." },
+  "Maths / reasoning": { base: 5.7, small: 8.5, large: 4.85, note: "Reasoning amplifies small arithmetic and token errors." },
+  "Agents / tool calling": { base: 5.7, small: 8.5, large: 4.85, note: "Tool calls require exact JSON and argument spelling." },
+  "Vision (image + text)": { base: 4.85, small: 6.6, large: 4.85, note: "Vision requires a VLM and a separately loaded vision encoder." },
+  "Classification / extraction": { base: 4.85, small: 4.85, large: 4.85, note: "Short constrained outputs tolerate quantization well." },
+  "Translation / multilingual": { base: 5.7, small: 8.5, large: 4.85, note: "Low-resource languages degrade first at lower bits." },
+};
+
+function requiredBits(model, task = state.task) {
+  const rule = taskRules[task] || taskRules["General chat / Q&A"];
+  const total = Number(model["Total params (B)"]);
+  return total < 4 ? rule.small : total >= 30 ? rule.large : rule.base;
 }
 
 function tokPerSecond(hardware, model, cpu = false) {
   const bandwidth = Number(cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"]);
-  const perTokenWork = Number(model["Active params (B)"]) * state.bits / 8 + kvPerTokenGb(model);
-  return efficiency(cpu ? hardware.Vendor || "" : hardware.Vendor, cpu) * bandwidth / perTokenWork / state.users;
+  const perTokenWork = Number(model["Active params (B)"]) * state.bits / 8;
+  const runtimeEff = efficiency(cpu ? "" : hardware.Vendor, cpu, hardware);
+  if (!runtimeEff) return 0;
+  const quantityScale = cpu ? 1 : 1 + 0.8 * (state.gpuQuantity - 1);
+  return runtimeEff * bandwidth * quantityScale / perTokenWork / state.users;
 }
 
 function gpuUsable(hardware) {
-  return Number(hardware["Memory (GB)"]) * 0.92;
+  const isPreferred = state.preferredGpu && hardware.Accelerator === state.preferredGpu.Accelerator;
+  const memory = isPreferred && state.deviceVram > 0 ? state.deviceVram : Number(hardware["Memory (GB)"]);
+  return memory * 0.92 * state.gpuQuantity;
 }
 
 function cpuUsable(hardware) {
-  const memory = Number(hardware["Max RAM (GB)"]);
+  const isHost = state.hostCpu && hardware["CPU / platform"] === state.hostCpu["CPU / platform"];
+  const memory = isHost && state.hostRam > 0 ? state.hostRam : Number(hardware["Max RAM (GB)"]);
   return memory - Math.min(8, memory * 0.25);
 }
 
@@ -120,12 +184,20 @@ function modelMatchesFilters(row, prefix = "model") {
   return (vendor === "all" || row.Vendor === vendor) && (type === "all" || row.Type === type);
 }
 
+function hostOffloadGb() {
+  if (state.offload !== "Y" || !state.hostCpu) return 0;
+  const raw = state.hostRam > 0 ? state.hostRam : Number(state.hostCpu["Max RAM (GB)"]);
+  return Math.max(0, raw - Math.max(8, raw * 0.1));
+}
+
 function hardwareRows() {
   const need = memoryNeed(state.model).total;
   if (state.view === "cpus") {
     return state.data.cpus
       .filter((row) => cleanNumber(row["Max RAM (GB)"]) && cleanNumber(row["Memory BW (GB/s)"]))
       .filter((row) => !state.intelOnly || isIntelHardware(row, "cpu"))
+      .filter((row) => Number(row["Base / default power (W)"]) <= state.maxCpuPower)
+      .filter((row) => state.pcieWidth === "Auto" || Number(row["CPU PCIe lanes"]) >= Number(state.pcieWidth.slice(1)) * state.gpuQuantity)
       .map((row) => ({
         raw: row,
         name: row["CPU / platform"],
@@ -136,7 +208,7 @@ function hardwareRows() {
         bandwidth: Number(row["Memory BW (GB/s)"]),
         power: row["Max turbo / max power (W)"],
         speed: tokPerSecond(row, state.model, true),
-        fits: cpuUsable(row) >= need,
+        fits: cpuUsable(row) >= need && efficiency("", true, row) > 0 && state.bits >= requiredBits(state.model) && (state.task !== "Vision (image + text)" || /VLM|Vision/i.test(state.model.Type || "")),
         evidence: row["Evidence status"],
         source: row["Source URL"],
         kind: "cpu",
@@ -153,13 +225,13 @@ function hardwareRows() {
       raw: row,
       name: row.Accelerator,
       vendor: row.Vendor,
-      subtitle: `${row.Architecture} · ${row.Interface}`,
-      memory: gpuUsable(row),
+      subtitle: `${row.Architecture} · ${row.Interface} · ${state.runtime}`,
+      memory: gpuUsable(row) + hostOffloadGb(),
       physicalMemory: Number(row["Memory (GB)"]),
       bandwidth: Number(row["Bandwidth (GB/s)"]),
       power: row["TDP / board power (W)"],
       speed: tokPerSecond(row, state.model, false),
-      fits: gpuUsable(row) >= need,
+      fits: gpuUsable(row) + hostOffloadGb() >= need && efficiency(row.Vendor, false, row) > 0 && state.bits >= requiredBits(state.model) && (state.task !== "Vision (image + text)" || /VLM|Vision/i.test(state.model.Type || "")),
       evidence: row["Evidence status"],
       source: row["Source URL"],
       kind: "gpu",
@@ -203,6 +275,8 @@ function renderSummary() {
   byId("runtime-segment").style.width = `${need.runtime / need.total * 100}%`;
   const excel = excelMemoryNeed(state.model);
   const parityDelta = (need.total / excel.total - 1) * 100;
+  const minBits = requiredBits(state.model);
+  byId("profile-note").innerHTML = `<strong>${escapeHtml(state.task)}</strong> requires ≥ ${minBits} bits for this model. Selected quant is ${state.bits} bits${state.bits < minBits ? ' <span class="warning">— below the task-safe floor.</span>' : ' — meets the task-safe floor.'} ${state.offload === "Y" && state.hostCpu ? `Host offload pool: ${decimal.format(hostOffloadGb())} GB from ${escapeHtml(state.hostCpu["CPU / platform"])}.` : ""} Response at target: ~${decimal.format(state.answerTokens / state.target)} s after prefill; prompt/context use ${decimal.format(state.promptTokens / state.context * 100)}%.`;
   byId("memory-parity").innerHTML = `<span><b>Excel fit estimate</b> ${decimal.format(excel.total)} GB</span><span><b>Web estimate</b> ${decimal.format(need.total)} GB</span><span class="${Math.abs(parityDelta) > 2 ? "delta-hot" : ""}"><b>Delta</b> ${parityDelta >= 0 ? "+" : ""}${decimal.format(parityDelta)}%</span>`;
   byId("cpu-count").textContent = hardwareRowsForView("cpus").filter((row) => row.fits).length;
 }
@@ -230,9 +304,10 @@ function excelEfficiency(hardware, cpu = false) {
 
 function excelTokPerSecond(hardware, model, cpu = false) {
   const bandwidth = Number(cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"]);
-  const kv = kvPerTokenGb(model) * state.context * state.users;
+  const kv = kvPerTokenGb(model, state.kvBits) * state.context * state.users;
   const denominator = Number(model["Active params (B)"]) * state.bits / 8 + kv;
-  return excelEfficiency(hardware, cpu) * bandwidth / denominator / state.users;
+  const quantityScale = cpu ? 1 : 1 + 0.8 * (state.gpuQuantity - 1);
+  return efficiency(cpu ? "" : hardware.Vendor, cpu, hardware) * bandwidth * quantityScale / denominator / state.users;
 }
 
 function vendorInitial(vendor, name) {
@@ -403,7 +478,7 @@ function renderParityAudit() {
   const a = parity["8k"];
   const b = parity["32k"];
   const signed = (value) => `${value >= 0 ? "+" : ""}${decimal.format(value)}%`;
-  host.innerHTML = `<div class="parity-metrics"><div><strong>${signed(a.memory_delta_pct.median)}</strong><small>Median 8K memory delta</small></div><div><strong>${signed(a.gpu_decode_delta_pct.median)}</strong><small>Median 8K GPU decode delta</small></div><div><strong>${signed(b.gpu_decode_delta_pct.median)}</strong><small>Median 32K GPU decode delta</small></div><div><strong>${signed(b.cpu_decode_delta_pct.median)}</strong><small>Median 32K CPU decode delta</small></div></div><p class="parity-caption">Positive means web is higher. The gap grows with context because Excel counts the full KV allocation in per-token traffic; web counts KV bytes read per token. The 8K medians are +3.08% memory, +12.74% GPU decode and +13.86% CPU decode. At 32K they are -0.02% memory, +58.58% GPU decode and +60.88% CPU decode.</p>`;
+  host.innerHTML = `<div class="parity-metrics"><div><strong>${signed(a.memory_delta_pct.median)}</strong><small>Median 8K memory delta</small></div><div><strong>${signed(a.gpu_decode_delta_pct.median)}</strong><small>Median 8K GPU decode delta</small></div><div><strong>${signed(b.gpu_decode_delta_pct.median)}</strong><small>Median 32K GPU decode delta</small></div><div><strong>${signed(b.cpu_decode_delta_pct.median)}</strong><small>Median 32K CPU decode delta</small></div></div><p class="parity-caption">Positive means the app is higher. At 8K, median deltas are ${signed(a.memory_delta_pct.median)} memory, ${signed(a.gpu_decode_delta_pct.median)} GPU decode, and ${signed(a.cpu_decode_delta_pct.median)} CPU decode. At 32K they are ${signed(b.memory_delta_pct.median)} memory, ${signed(b.gpu_decode_delta_pct.median)} GPU decode, and ${signed(b.cpu_decode_delta_pct.median)} CPU decode. The remaining speed gap comes from Excel charging the whole KV allocation into the per-token traffic denominator.</p>`;
 }
 
 function hardwarePool() {
@@ -413,27 +488,51 @@ function hardwarePool() {
 }
 
 function hardwareMemory(item) {
-  return item.kind === "gpu" ? gpuUsable(item.raw) : cpuUsable(item.raw);
+  if (item.kind === "gpu") {
+    const raw = state.hardwareVram > 0 ? state.hardwareVram : Number(item.raw["Memory (GB)"]);
+    const gpuPool = raw * (1 - state.hardwareMemoryHeadroom / 100) * state.hardwareGpuQuantity;
+    const hostPool = state.hardwareOffload === "Y" && state.hardwareCpu ? Math.max(0, (state.hardwareRam || Number(state.hardwareCpu["Max RAM (GB)"])) - 8) : 0;
+    return gpuPool + hostPool;
+  }
+  const raw = state.hardwareRam > 0 ? state.hardwareRam : Number(item.raw["Max RAM (GB)"]);
+  return raw - Math.min(8, raw * 0.25);
 }
 
 function hardwareBandwidth(item) {
-  return Number(item.kind === "gpu" ? item.raw["Bandwidth (GB/s)"] : item.raw["Memory BW (GB/s)"]);
+  const raw = Number(item.kind === "gpu" ? item.raw["Bandwidth (GB/s)"] : item.raw["Memory BW (GB/s)"]);
+  const quantity = item.kind === "gpu" ? 1 + 0.8 * (state.hardwareGpuQuantity - 1) : 1;
+  return raw * quantity * state.hardwareBandwidthUtil / 100;
 }
 
 function hardwareNeed(model) {
   const weights = Number(model["Total params (B)"]) * state.hardwareBits / 8 * 1.03;
-  const kv = kvPerTokenGb(model) * state.hardwareContext * state.hardwareUsers;
-  return { weights, kv, total: weights + kv + 1.5 };
+  const kv = kvPerTokenGb(model, state.hardwareKvBits) * state.hardwareContext * state.hardwareUsers;
+  return { weights, kv, total: weights + kv + weights * 0.07 };
 }
 
 function hardwareSpeed(item, model) {
-  const denominator = Number(model["Active params (B)"]) * state.hardwareBits / 8 + kvPerTokenGb(model);
-  return efficiency(item.kind === "gpu" ? item.raw.Vendor : "", item.kind === "cpu") * hardwareBandwidth(item) / denominator / state.hardwareUsers;
+  const denominator = Number(model["Active params (B)"]) * state.hardwareBits / 8;
+  const oldRuntime = state.runtime;
+  state.runtime = state.hardwareRuntime;
+  const eff = efficiency(item.kind === "gpu" ? item.raw.Vendor : "", item.kind === "cpu", item.raw);
+  state.runtime = oldRuntime;
+  return eff * hardwareBandwidth(item) / denominator / state.hardwareUsers;
 }
 
 function setHardware(item) {
   state.hardware = item.raw;
   state.hardwareKind = item.kind;
+  if (item.kind === "gpu") {
+    state.hardwareGpu = item.raw;
+    byId("hardware-gpu-select").value = item.name;
+    state.hardwareVram = Number(item.raw["Memory (GB)"]);
+    byId("hardware-vram-input").value = state.hardwareVram;
+  } else {
+    state.hardwareCpu = item.raw;
+    byId("hardware-cpu-select").value = item.name;
+    state.hardwareRam = Number(item.raw["Max RAM (GB)"]);
+    byId("hardware-ram-input").value = state.hardwareRam;
+  }
   byId("hardware-search").value = item.name;
   closeHardwareSearch();
   renderHardwareView();
@@ -476,8 +575,8 @@ function compatibleModels(item) {
     .filter((model) => model["Active params (B)"] != null && model.Layers != null && model["KV heads"] != null && model["Head dim"] != null)
     .filter((model) => modelMatchesFilters(model, "hardware"))
     .map((model) => ({ model, need: hardwareNeed(model).total, speed: hardwareSpeed(item, model) }))
-    .map((row) => ({ ...row, fits: row.need <= capacity }))
-    .filter((row) => filter === "all" || (filter === "fits" ? row.fits : row.fits && row.speed >= state.hardwareTarget))
+    .map((row) => ({ ...row, safeQuant: state.hardwareBits >= requiredBits(row.model, state.hardwareTask) && (state.hardwareTask !== "Vision (image + text)" || /VLM|Vision/i.test(row.model.Type || "")), fits: row.need <= capacity && state.hardwareBits >= requiredBits(row.model, state.hardwareTask) && (state.hardwareTask !== "Vision (image + text)" || /VLM|Vision/i.test(row.model.Type || "")) }))
+    .filter((row) => filter === "all" || (filter === "fits" ? row.fits : row.fits && row.safeQuant && row.speed >= state.hardwareTarget))
     .sort((a, b) => Number(b.fits) - Number(a.fits) || b.speed - a.speed);
 }
 
@@ -488,6 +587,8 @@ function renderHardwareView() {
   const rows = compatibleModels(item);
   const fits = compatibleModels(item).filter((row) => row.fits).length;
   const source = item.raw["Source URL"] || "";
+  const taskMinimum = taskRules[state.hardwareTask] || taskRules["General chat / Q&A"];
+  byId("hardware-profile-note").textContent = `${state.hardwareTask}: model rows below the task quant floor are not shown as meeting the speed target. ${state.hardwareOffload === "Y" && state.hardwareCpu ? `CPU offload may use ${decimal.format(Number(byId("hardware-ram-input").value || state.hardwareCpu["Max RAM (GB)"]))} GB host RAM.` : "CPU offload disabled."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
   const summary = byId("hardware-summary");
   summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div>`;
   summary.querySelector("#show-hardware-evidence").addEventListener("click", () => openEvidence(item.raw, item.kind));
@@ -503,6 +604,7 @@ function renderHardwareView() {
     const fast = row.fits && row.speed >= state.hardwareTarget;
     const article = document.createElement("article");
     article.className = "result-row model-result-row";
+    if (!row.safeQuant) article.classList.add("quality-warning");
     const excelNeed = excelMemoryNeed(model, state.hardwareBits, state.hardwareContext, state.hardwareUsers).total;
     article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.fits ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.fits ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : "Memory shortfall"}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Fact check ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i></button></div>`;
     article.querySelector(".row-detail").addEventListener("click", () => openEvidence(model, "model"));
@@ -536,7 +638,20 @@ function populateFilterOptions() {
     option.dataset.bits = quant["Bits/weight (eff.)"];
     target.add(option);
   }
+  for (const cpu of state.data.cpus) {
+    byId("host-cpu-select").add(new Option(cpu["CPU / platform"], cpu["CPU / platform"]));
+    byId("hardware-cpu-select").add(new Option(cpu["CPU / platform"], cpu["CPU / platform"]));
+  }
+  for (const gpu of state.data.gpus) {
+    byId("preferred-gpu-select").add(new Option(gpu.Accelerator, gpu.Accelerator));
+    byId("hardware-gpu-select").add(new Option(gpu.Accelerator, gpu.Accelerator));
+  }
   const defaultHardware = hardwarePool().find((item) => item.name === "Intel Arc Pro B60") || hardwarePool()[0];
+  const defaultCpu = state.data.cpus.find((row) => row["CPU / platform"] === "Core Ultra 9 285K") || state.data.cpus[0];
+  state.hardwareCpu = defaultCpu;
+  state.hardwareRam = Number(defaultCpu["Max RAM (GB)"]);
+  byId("hardware-cpu-select").value = defaultCpu["CPU / platform"];
+  byId("hardware-ram-input").value = state.hardwareRam;
   setHardware(defaultHardware);
 }
 
@@ -651,6 +766,16 @@ function bindEvents() {
     if (state.page === "hardware") renderHardwareView();
   });
   for (const id of ["model-vendor-filter", "model-type-filter"]) byId(id).addEventListener("change", showSearch);
+  const profileInputs = [
+    ["runtime-select", "runtime", render], ["task-select", "task", render], ["kv-bits-select", "kvBits", render],
+    ["prompt-length-input", "promptTokens", render], ["answer-length-input", "answerTokens", render],
+    ["offload-select", "offload", render], ["gpu-quantity-input", "gpuQuantity", render],
+    ["cpu-power-input", "maxCpuPower", render], ["pcie-width-select", "pcieWidth", render], ["device-vram-input", "deviceVram", render]
+  ];
+  for (const [id, key, callback] of profileInputs) byId(id).addEventListener("input", (event) => { state[key] = typeof state[key] === "number" ? Number(event.target.value) : event.target.value; callback(); });
+  byId("host-cpu-select").addEventListener("change", (event) => { state.hostCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hostCpu) { state.hostRam = Number(state.hostCpu["Max RAM (GB)"]); byId("host-ram-input").value = state.hostRam; } render(); });
+  byId("host-ram-input").addEventListener("input", (event) => { state.hostRam = Number(event.target.value); render(); });
+  byId("preferred-gpu-select").addEventListener("change", (event) => { state.preferredGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.preferredGpu) { state.deviceVram = Number(state.preferredGpu["Memory (GB)"]); byId("device-vram-input").value = state.deviceVram; } render(); });
   byId("min-memory-filter").addEventListener("change", (event) => { state.minMemory = Number(event.target.value); render(); });
   byId("max-power-filter").addEventListener("change", (event) => { state.maxPower = Number(event.target.value); render(); });
 
@@ -662,6 +787,19 @@ function bindEvents() {
   byId("hardware-context-select").addEventListener("change", (event) => { state.hardwareContext = Number(event.target.value); renderHardwareView(); });
   byId("hardware-user-select").addEventListener("change", (event) => { state.hardwareUsers = Number(event.target.value); renderHardwareView(); });
   byId("hardware-target-input").addEventListener("input", (event) => { state.hardwareTarget = Number(event.target.value) || 20; renderHardwareView(); });
+  byId("hardware-cpu-select").addEventListener("change", (event) => { state.hardwareCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hardwareCpu) { state.hardwareRam = Number(state.hardwareCpu["Max RAM (GB)"]); byId("hardware-ram-input").value = state.hardwareRam; } renderHardwareView(); });
+  byId("hardware-gpu-select").addEventListener("change", (event) => { state.hardwareGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.hardwareGpu) { state.hardware = state.hardwareGpu; state.hardwareKind = "gpu"; state.hardwareVram = Number(state.hardwareGpu["Memory (GB)"]); byId("hardware-vram-input").value = state.hardwareVram; byId("hardware-search").value = state.hardwareGpu.Accelerator; } renderHardwareView(); });
+  byId("hardware-ram-input").addEventListener("input", (event) => { state.hardwareRam = Number(event.target.value); renderHardwareView(); });
+  byId("hardware-vram-input").addEventListener("input", (event) => { state.hardwareVram = Number(event.target.value); renderHardwareView(); });
+  byId("hardware-gpu-quantity-input").addEventListener("input", (event) => { state.hardwareGpuQuantity = Number(event.target.value); renderHardwareView(); });
+  byId("hardware-runtime-select").addEventListener("change", (event) => { state.hardwareRuntime = event.target.value; renderHardwareView(); });
+  byId("hardware-task-select").addEventListener("change", (event) => { state.hardwareTask = event.target.value; renderHardwareView(); });
+  byId("hardware-kv-bits-select").addEventListener("change", (event) => { state.hardwareKvBits = Number(event.target.value); renderHardwareView(); });
+  byId("hardware-offload-select").addEventListener("change", (event) => { state.hardwareOffload = event.target.value; renderHardwareView(); });
+  byId("hardware-prompt-input").addEventListener("input", renderHardwareView);
+  byId("hardware-answer-input").addEventListener("input", renderHardwareView);
+  byId("memory-headroom-input").addEventListener("input", (event) => { state.hardwareMemoryHeadroom = Number(event.target.value); renderHardwareView(); });
+  byId("bandwidth-util-input").addEventListener("input", (event) => { state.hardwareBandwidthUtil = Number(event.target.value); renderHardwareView(); });
   for (const id of ["hardware-model-vendor-filter", "hardware-model-type-filter", "hardware-model-filter"]) byId(id).addEventListener("change", renderHardwareView);
 
   byId("database-select").addEventListener("change", renderDatabase);

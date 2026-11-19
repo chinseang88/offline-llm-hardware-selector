@@ -29,7 +29,7 @@ Run scripts with the workspace Python (needs `openpyxl`; `pymupdf` optional for 
    python -m http.server 8000 -d docs
    ```
    Open `http://localhost:8000`. The live public page is `https://chinseang88.github.io/offline-llm-hardware-selector/`.
-2. Identify model, quantization (default `Q4_K_M`), context length (default 8192), concurrent users (default 1), vendor preference, and target tok/s (default 20). If the question names hardware instead of a model, use `--hw`.
+2. Identify CPU vs GPU separately, installed RAM vs physical VRAM, GPU count, runtime, task/application, quantization, KV precision (4/8/16-bit), context, users, prompt/answer lengths, target tok/s, offload, host power, memory/bandwidth utilization and PCIe width. If the question only mentions a model, use sensible workbook defaults (Q4, 8K, 8-bit KV, llama.cpp, 1 user).
 2. Run, e.g.:
    ```
    python scripts/selector.py "Qwen3 32B" --quant Q4_K_M --context 8192 --users 1 --vendor Intel

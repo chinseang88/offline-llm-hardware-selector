@@ -14,10 +14,10 @@ Every row carries a `Source URL` and an `Evidence status` ("7 verified / 0 corre
 
 Open the live selector at **https://chinseang88.github.io/offline-llm-hardware-selector/**.
 
-- **Model → Hardware:** model/vendor/type search, quantization, context, users, Intel-only, minimum memory and maximum power filters.
-- **Hardware → Models:** select any GPU or CPU and list models that fit its usable memory and target throughput.
+- **Model → Hardware:** model/vendor/type, quantization, context/users, target speed, runtime, primary application, KV precision, prompt/answer lengths, CPU offload, host CPU/RAM, GPU quantity/VRAM, host power, PCIe width, Intel-only and legacy filters.
+- **Hardware → Models:** independently select CPU and installed RAM, GPU and physical VRAM, GPU quantity, runtime, application, KV precision, offload, headroom and bandwidth utilization, then list models that fit.
 - **Database / Evidence:** search, inspect, filter, and download the public model/GPU/CPU and source-check tables.
-- **Excel parity:** each result shows web vs Excel decode estimate, and the Method view summarizes aggregate 8K/32K memory/throughput deltas.
+- **Excel parity:** each result shows the page vs Excel decode estimate, and the Method view summarizes aggregate 8K/32K memory/throughput deltas from the same workbook formulas. A comparison with another external site requires that site's URL.
 
 The static app lives in `docs/`. Rebuild its dataset after changing any CSV:
 
