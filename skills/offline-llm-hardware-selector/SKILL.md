@@ -29,7 +29,7 @@ Run scripts with the workspace Python (needs `openpyxl`; `pymupdf` optional for 
    python -m http.server 8000 -d docs
    ```
    Open `http://localhost:8000`. The live public page is `https://chinseang88.github.io/offline-llm-hardware-selector/`.
-2. Identify CPU vs GPU separately, installed RAM vs physical VRAM, GPU count, runtime, task/application, quantization, KV precision (4/8/16-bit), context, users, prompt/answer lengths, target tok/s, offload, host power, memory/bandwidth utilization and PCIe width. If the question only mentions a model, use sensible workbook defaults (Q4, 8K, 8-bit KV, llama.cpp, 1 user).
+Use the website's catalog dropdowns exactly; do not permit arbitrary CPU/GPU/memory/context/user/speed/KV values that are not in the workbook's data-validation lists. Intel-only must prune both CPU and GPU options and show detailed product labels (generation/Lake, core count, base/turbo watts, memory type/bandwidth/RAM, PCIe lanes, GPU VRAM/bandwidth/TDP/interface/architecture).
 2. Run, e.g.:
    ```
    python scripts/selector.py "Qwen3 32B" --quant Q4_K_M --context 8192 --users 1 --vendor Intel

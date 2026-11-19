@@ -29,8 +29,8 @@ const state = {
   hardwareRuntime: "llama.cpp",
   hardwareTask: "General chat / Q&A",
   hardwareKvBits: 8,
-  hardwareOffload: "Y",
-  hardwareMemoryHeadroom: 10,
+  hardwareOffload: "N",
+  hardwareMemoryHeadroom: 8,
   hardwareBandwidthUtil: 100,
   evidenceStatus: "all",
   runtime: "llama.cpp",
@@ -173,7 +173,74 @@ function cpuUsable(hardware) {
 
 function isIntelHardware(row, kind = "gpu") {
   if (kind === "gpu") return row.Vendor === "Intel";
-  return /^(Intel |Core |Core i|Xeon )|\bCore Ultra\b|\bXeon\b/.test(String(row["CPU / platform"] || ""));
+  const name = String(row["CPU / platform"] || "");
+  return /^(Intel |Core Ultra|Core i[3579]|Xeon )|\bCore Ultra\b|\bXeon\b/.test(name);
+}
+
+function cpuGeneration(name) {
+  const map = {
+    "Intel N100 mini-PC": "Alder Lake-N",
+    "Intel N150 mini-PC": "Twin Lake",
+    "Intel N305 mini-PC": "Alder Lake-N",
+    "Core Ultra 7 258V (Lunar Lake)": "Lunar Lake",
+    "Core Ultra 5 125H (Meteor Lake)": "Meteor Lake",
+    "Core Ultra 9 285H": "Arrow Lake-H",
+    "Core Ultra 9 275HX": "Arrow Lake-HX",
+    "Core i5-12400": "Alder Lake-S",
+    "Core i7-14700": "Raptor Lake-S Refresh",
+    "Core Ultra 7 265K": "Arrow Lake-S",
+    "Core Ultra 9 285K": "Arrow Lake-S",
+    "Xeon Gold 6430 (SPR, 1S)": "Sapphire Rapids-SP",
+    "Xeon w5-2555X (W-2500)": "Sapphire Rapids W-2500",
+    "Xeon w7-2595X (W-2500)": "Sapphire Rapids W-2500",
+    "Xeon w9-3595X (W-3500)": "Sapphire Rapids W-3500",
+    "Xeon 6 6980P (1S)": "Granite Rapids-SP",
+  };
+  return map[name] || "";
+}
+
+function cpuCatalogLabel(row) {
+  const generation = cpuGeneration(row["CPU / platform"]);
+  return `${row["CPU / platform"]}${generation ? ` · ${generation}` : ""} · ${row.Class} · ${row.Cores}C · ${row["Base / default power (W)"]}/${row["Max turbo / max power (W)"]}W · ${row.Memory} · ${row["Memory BW (GB/s)"]} GB/s · ${row["Max RAM (GB)"]} GB RAM · ${row["CPU PCIe lanes"]} PCIe lanes`;
+}
+
+function gpuCatalogLabel(row) {
+  return `${row.Accelerator} · ${row["Memory (GB)"]} GB · ${row["Bandwidth (GB/s)"]} GB/s · ${row["TDP / board power (W)"]}W · ${row.Interface} · ${row.Architecture}`;
+}
+
+function rebuildCatalogSelect(id, rows, key, label, placeholder, filterKind) {
+  const select = byId(id);
+  const previous = select.value;
+  select.replaceChildren();
+  if (placeholder) select.add(new Option(placeholder.text, placeholder.value));
+  const filtered = rows.filter((row) => !state.intelOnly || isIntelHardware(row, filterKind));
+  for (const row of filtered) select.add(new Option(label(row), row[key]));
+  select.value = filtered.some((row) => row[key] === previous) ? previous : (placeholder ? placeholder.value : filtered[0]?.[key] || "");
+}
+
+function selectClosest(select, value) {
+  const nums = [...select.options].map((option) => Number(option.value)).filter((number) => Number.isFinite(number) && number > 0).sort((a, b) => a - b);
+  const desired = Number(value);
+  const valid = nums.filter((number) => number <= desired);
+  select.value = String(valid.length ? valid[valid.length - 1] : nums[0] || 0);
+  return Number(select.value);
+}
+
+function refreshCatalogDropdowns() {
+  rebuildCatalogSelect("host-cpu-select", state.data.cpus, "CPU / platform", cpuCatalogLabel, { text: "Auto / none", value: "" }, "cpu");
+  rebuildCatalogSelect("hardware-cpu-select", state.data.cpus, "CPU / platform", cpuCatalogLabel, null, "cpu");
+  rebuildCatalogSelect("preferred-gpu-select", state.data.gpus, "Accelerator", gpuCatalogLabel, { text: "No preference", value: "" }, "gpu");
+  rebuildCatalogSelect("hardware-gpu-select", state.data.gpus, "Accelerator", gpuCatalogLabel, null, "gpu");
+  refreshHardwareDropdown();
+  for (const id of ["device-vram-input", "hardware-vram-input"]) {
+    const select = byId(id);
+    const previous = select.value;
+    const values = [...new Set(state.data.gpus.map((row) => Number(row["Memory (GB)"])).filter(Number.isFinite))].sort((a, b) => a - b);
+    select.replaceChildren();
+    if (id === "device-vram-input") select.add(new Option("Catalog VRAM", "0"));
+    for (const value of values) select.add(new Option(`${value} GB`, String(value)));
+    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+  }
 }
 
 function modelMatchesFilters(row, prefix = "model") {
@@ -197,12 +264,12 @@ function hardwareRows() {
       .filter((row) => cleanNumber(row["Max RAM (GB)"]) && cleanNumber(row["Memory BW (GB/s)"]))
       .filter((row) => !state.intelOnly || isIntelHardware(row, "cpu"))
       .filter((row) => Number(row["Base / default power (W)"]) <= state.maxCpuPower)
-      .filter((row) => state.pcieWidth === "Auto" || Number(row["CPU PCIe lanes"]) >= Number(state.pcieWidth.slice(1)) * state.gpuQuantity)
+      .filter((row) => state.pcieWidth === "Auto" || Number(row["CPU PCIe lanes"]) >= Number((state.pcieWidth.match(/\d+/) || [0])[0]) * state.gpuQuantity)
       .map((row) => ({
         raw: row,
         name: row["CPU / platform"],
         vendor: row.Class,
-        subtitle: `${row.Cores} cores · ${row.Memory}`,
+        subtitle: `${cpuGeneration(row["CPU / platform"]) || row.Class} · ${row.Cores} cores · ${row.Memory}`,
         memory: cpuUsable(row),
         physicalMemory: Number(row["Max RAM (GB)"]),
         bandwidth: Number(row["Memory BW (GB/s)"]),
@@ -253,8 +320,7 @@ function filteredRows() {
 
 function setModel(model) {
   state.model = model;
-  byId("model-search").value = model.Model;
-  closeSearch();
+  refreshModelDropdown();
   render();
 }
 
@@ -375,28 +441,17 @@ function render() {
   renderRows();
 }
 
-function showSearch() {
-  const input = byId("model-search");
-  const query = input.value.toLowerCase().trim();
-  const rows = state.data.models.filter((row) => row.Model.toLowerCase().includes(query) && modelMatchesFilters(row, "model")).slice(0, 18);
-  const menu = byId("model-menu");
-  menu.replaceChildren();
-  for (const row of rows) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.role = "option";
-    button.innerHTML = `<span>${escapeHtml(row.Model)}</span><small>${decimal.format(row["Total params (B)"])}B · ${escapeHtml(row.Vendor)}</small>`;
-    button.addEventListener("click", () => setModel(row));
-    menu.append(button);
-  }
-  menu.hidden = rows.length === 0;
-  input.setAttribute("aria-expanded", String(!menu.hidden));
+function refreshModelDropdown() {
+  const select = byId("model-search");
+  const rows = state.data.models.filter((row) => modelMatchesFilters(row, "model"));
+  select.replaceChildren();
+  for (const row of rows) select.add(new Option(`${row.Model} · ${row.Vendor} · ${decimal.format(row["Total params (B)"])}B`, row.Model));
+  select.value = rows.some((row) => row.Model === state.model?.Model) ? state.model.Model : rows[0]?.Model || "";
+  if (state.model && !rows.some((row) => row.Model === state.model.Model) && rows.length) state.model = rows[0];
 }
 
-function closeSearch() {
-  byId("model-menu").hidden = true;
-  byId("model-search").setAttribute("aria-expanded", "false");
-}
+function showSearch() { refreshModelDropdown(); }
+function closeSearch() {}
 
 function evidenceFacts(sheet, item) {
   const key = `${sheet}|${item}`;
@@ -538,31 +593,19 @@ function setHardware(item) {
   renderHardwareView();
 }
 
-function showHardwareSearch() {
-  const query = byId("hardware-search").value.toLowerCase().trim();
-  const rows = hardwarePool()
-    .filter((item) => item.name.toLowerCase().includes(query))
-    .filter((item) => !state.intelOnly || isIntelHardware(item.raw, item.kind))
-    .slice(0, 22);
-  const menu = byId("hardware-menu");
-  menu.replaceChildren();
+function refreshHardwareDropdown() {
+  const select = byId("hardware-search");
+  const previous = select.value;
+  const rows = hardwarePool().filter((item) => !state.intelOnly || isIntelHardware(item.raw, item.kind));
+  select.replaceChildren();
   for (const item of rows) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.role = "option";
-    const memory = item.kind === "gpu" ? item.raw["Memory (GB)"] : item.raw["Max RAM (GB)"];
-    button.innerHTML = `<span>${escapeHtml(item.name)}</span><small>${item.kind.toUpperCase()} · ${escapeHtml(memory)} GB</small>`;
-    button.addEventListener("click", () => setHardware(item));
-    menu.append(button);
+    const label = item.kind === "gpu" ? `GPU · ${gpuCatalogLabel(item.raw)}` : `CPU · ${cpuCatalogLabel(item.raw)}`;
+    select.add(new Option(label, item.name));
   }
-  menu.hidden = rows.length === 0;
-  byId("hardware-search").setAttribute("aria-expanded", String(!menu.hidden));
+  select.value = rows.some((item) => item.name === previous) ? previous : rows.some((item) => item.name === state.hardware?.Accelerator || item.name === state.hardware?.["CPU / platform"]) ? (state.hardware.Accelerator || state.hardware["CPU / platform"]) : rows[0]?.name || "";
 }
-
-function closeHardwareSearch() {
-  byId("hardware-menu").hidden = true;
-  byId("hardware-search").setAttribute("aria-expanded", "false");
-}
+function showHardwareSearch() { refreshHardwareDropdown(); }
+function closeHardwareSearch() {}
 
 function currentHardwareItem() {
   return { raw: state.hardware, kind: state.hardwareKind, name: state.hardwareKind === "gpu" ? state.hardware.Accelerator : state.hardware["CPU / platform"] };
@@ -638,26 +681,22 @@ function populateFilterOptions() {
     option.dataset.bits = quant["Bits/weight (eff.)"];
     target.add(option);
   }
-  for (const cpu of state.data.cpus) {
-    byId("host-cpu-select").add(new Option(cpu["CPU / platform"], cpu["CPU / platform"]));
-    byId("hardware-cpu-select").add(new Option(cpu["CPU / platform"], cpu["CPU / platform"]));
-  }
-  for (const gpu of state.data.gpus) {
-    byId("preferred-gpu-select").add(new Option(gpu.Accelerator, gpu.Accelerator));
-    byId("hardware-gpu-select").add(new Option(gpu.Accelerator, gpu.Accelerator));
-  }
+  refreshCatalogDropdowns();
   const defaultHardware = hardwarePool().find((item) => item.name === "Intel Arc Pro B60") || hardwarePool()[0];
   const defaultCpu = state.data.cpus.find((row) => row["CPU / platform"] === "Core Ultra 9 285K") || state.data.cpus[0];
   state.hardwareCpu = defaultCpu;
   state.hardwareRam = Number(defaultCpu["Max RAM (GB)"]);
   byId("hardware-cpu-select").value = defaultCpu["CPU / platform"];
-  byId("hardware-ram-input").value = state.hardwareRam;
+  state.hardwareRam = selectClosest(byId("hardware-ram-input"), state.hardwareRam);
   setHardware(defaultHardware);
+  refreshModelDropdown();
 }
 
 function databaseRows() {
   const name = byId("database-select").value;
-  return state.data[name];
+  const rows = state.data[name];
+  if (!state.intelOnly || !["gpus", "cpus"].includes(name)) return rows;
+  return rows.filter((row) => isIntelHardware(row, name === "gpus" ? "gpu" : "cpu"));
 }
 
 function renderDatabase() {
@@ -699,8 +738,11 @@ function renderDatabase() {
 
 function renderEvidence() {
   const query = byId("evidence-search").value.toLowerCase().trim();
+  const intelGpuNames = new Set(state.data.gpus.filter((row) => row.Vendor === "Intel").map((row) => row.Accelerator));
+  const intelCpuNames = new Set(state.data.cpus.filter((row) => isIntelHardware(row, "cpu")).map((row) => row["CPU / platform"]));
   let rows = state.data.evidence.filter((row) => {
-    const matchesQuery = !query || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query));
+    const matchesIntel = !state.intelOnly || !["GPUs", "CPUs"].includes(row.Sheet) || (row.Sheet === "GPUs" ? intelGpuNames.has(row.Item) : intelCpuNames.has(row.Item));
+    const matchesQuery = (!query || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query))) && matchesIntel;
     const matchesStatus = state.evidenceStatus === "all" || (state.evidenceStatus === "OTHER" ? !["VERIFIED", "MISMATCH", "DERIVED/ESTIMATE"].includes(row.Status) : row.Status === state.evidenceStatus);
     return matchesQuery && matchesStatus;
   });
@@ -720,18 +762,9 @@ function renderEvidence() {
 }
 
 function bindEvents() {
-  byId("model-search").addEventListener("focus", showSearch);
-  byId("model-search").addEventListener("input", showSearch);
-  byId("model-search").addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeSearch();
-    if (event.key === "Enter") {
-      const exact = state.data.models.find((row) => row.Model.toLowerCase() === event.target.value.toLowerCase());
-      if (exact) setModel(exact);
-      else byId("model-menu").querySelector("button")?.click();
-    }
-  });
-  document.addEventListener("click", (event) => {
-    if (!event.target.closest(".model-control")) closeSearch();
+  byId("model-search").addEventListener("change", (event) => {
+    const model = state.data.models.find((row) => row.Model === event.target.value);
+    if (model) setModel(model);
   });
   byId("quant-select").addEventListener("change", (event) => {
     state.bits = Number(event.target.selectedOptions[0].dataset.bits);
@@ -740,7 +773,6 @@ function bindEvents() {
   byId("context-select").addEventListener("change", (event) => { state.context = Number(event.target.value); render(); });
   byId("user-select").addEventListener("change", (event) => { state.users = Number(event.target.value); render(); });
   byId("target-input").addEventListener("input", (event) => { state.target = Number(event.target.value) || 20; renderRows(); });
-  byId("vendor-select").addEventListener("change", (event) => { state.vendor = event.target.value; render(); });
   byId("legacy-toggle").addEventListener("click", () => { state.legacy = !state.legacy; byId("legacy-toggle").setAttribute("aria-pressed", String(state.legacy)); render(); });
   byId("fit-filter").addEventListener("change", (event) => { state.filter = event.target.value; renderRows(); });
   $$(".view-switcher button").forEach((button) => button.addEventListener("click", () => {
@@ -761,11 +793,44 @@ function bindEvents() {
     for (const toggle of [byId("intel-only-toggle"), byId("hardware-intel-only-toggle")]) toggle.setAttribute("aria-pressed", String(state.intelOnly));
     byId("vendor-select").value = state.intelOnly ? "Intel" : "all";
     state.vendor = state.intelOnly ? "Intel" : "all";
-    if (state.intelOnly && state.hardware && !isIntelHardware(state.hardware, state.hardwareKind)) setHardware(hardwarePool().find((item) => isIntelHardware(item.raw, item.kind)));
+    refreshCatalogDropdowns();
+    if (state.intelOnly) {
+      state.hostCpu = state.data.cpus.find((row) => isIntelHardware(row, "cpu"));
+      state.preferredGpu = state.data.gpus.find((row) => row.Vendor === "Intel");
+      state.hardwareCpu = state.data.cpus.find((row) => isIntelHardware(row, "cpu"));
+      if (!isIntelHardware(state.hardware, state.hardwareKind)) setHardware(hardwarePool().find((item) => isIntelHardware(item.raw, item.kind) && item.kind === "gpu"));
+      byId("host-cpu-select").value = state.hostCpu["CPU / platform"];
+      byId("hardware-cpu-select").value = state.hardwareCpu["CPU / platform"];
+      byId("preferred-gpu-select").value = state.preferredGpu.Accelerator;
+      state.hostRam = Number(state.hostCpu["Max RAM (GB)"]);
+      state.hardwareRam = Number(state.hardwareCpu["Max RAM (GB)"]);
+      state.deviceVram = Number(state.preferredGpu["Memory (GB)"]);
+      byId("host-ram-input").value = String(state.hostRam);
+      byId("hardware-ram-input").value = String(state.hardwareRam);
+      byId("device-vram-input").value = String(state.deviceVram);
+    } else {
+      state.hostCpu = null;
+      state.preferredGpu = null;
+      byId("host-cpu-select").value = "";
+      byId("preferred-gpu-select").value = "";
+    }
+    refreshModelDropdown();
     render();
     if (state.page === "hardware") renderHardwareView();
+    if (state.page === "database") renderDatabase();
+    if (state.page === "evidence") renderEvidence();
   });
-  for (const id of ["model-vendor-filter", "model-type-filter"]) byId(id).addEventListener("change", showSearch);
+  for (const id of ["model-vendor-filter", "model-type-filter"]) byId(id).addEventListener("change", () => {
+    refreshModelDropdown();
+    const next = state.data.models.find((row) => row.Model === byId("model-search").value);
+    if (next) state.model = next;
+    render();
+  });
+  byId("vendor-select").addEventListener("change", (event) => {
+    if (state.intelOnly && event.target.value !== "Intel") event.target.value = "Intel";
+    state.vendor = event.target.value;
+    render();
+  });
   const profileInputs = [
     ["runtime-select", "runtime", render], ["task-select", "task", render], ["kv-bits-select", "kvBits", render],
     ["prompt-length-input", "promptTokens", render], ["answer-length-input", "answerTokens", render],
@@ -773,21 +838,21 @@ function bindEvents() {
     ["cpu-power-input", "maxCpuPower", render], ["pcie-width-select", "pcieWidth", render], ["device-vram-input", "deviceVram", render]
   ];
   for (const [id, key, callback] of profileInputs) byId(id).addEventListener("input", (event) => { state[key] = typeof state[key] === "number" ? Number(event.target.value) : event.target.value; callback(); });
-  byId("host-cpu-select").addEventListener("change", (event) => { state.hostCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hostCpu) { state.hostRam = Number(state.hostCpu["Max RAM (GB)"]); byId("host-ram-input").value = state.hostRam; } render(); });
+  byId("host-cpu-select").addEventListener("change", (event) => { state.hostCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hostCpu) state.hostRam = selectClosest(byId("host-ram-input"), state.hostCpu["Max RAM (GB)"]); render(); });
   byId("host-ram-input").addEventListener("input", (event) => { state.hostRam = Number(event.target.value); render(); });
   byId("preferred-gpu-select").addEventListener("change", (event) => { state.preferredGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.preferredGpu) { state.deviceVram = Number(state.preferredGpu["Memory (GB)"]); byId("device-vram-input").value = state.deviceVram; } render(); });
   byId("min-memory-filter").addEventListener("change", (event) => { state.minMemory = Number(event.target.value); render(); });
   byId("max-power-filter").addEventListener("change", (event) => { state.maxPower = Number(event.target.value); render(); });
 
-  byId("hardware-search").addEventListener("focus", showHardwareSearch);
-  byId("hardware-search").addEventListener("input", showHardwareSearch);
-  byId("hardware-search").addEventListener("keydown", (event) => { if (event.key === "Enter") byId("hardware-menu").querySelector("button")?.click(); if (event.key === "Escape") closeHardwareSearch(); });
-  document.addEventListener("click", (event) => { if (!event.target.closest(".hardware-search-control")) closeHardwareSearch(); });
+  byId("hardware-search").addEventListener("change", (event) => {
+    const item = hardwarePool().find((entry) => entry.name === event.target.value);
+    if (item) setHardware(item);
+  });
   byId("hardware-quant-select").addEventListener("change", (event) => { state.hardwareBits = Number(event.target.selectedOptions[0].dataset.bits); renderHardwareView(); });
   byId("hardware-context-select").addEventListener("change", (event) => { state.hardwareContext = Number(event.target.value); renderHardwareView(); });
   byId("hardware-user-select").addEventListener("change", (event) => { state.hardwareUsers = Number(event.target.value); renderHardwareView(); });
   byId("hardware-target-input").addEventListener("input", (event) => { state.hardwareTarget = Number(event.target.value) || 20; renderHardwareView(); });
-  byId("hardware-cpu-select").addEventListener("change", (event) => { state.hardwareCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hardwareCpu) { state.hardwareRam = Number(state.hardwareCpu["Max RAM (GB)"]); byId("hardware-ram-input").value = state.hardwareRam; } renderHardwareView(); });
+  byId("hardware-cpu-select").addEventListener("change", (event) => { state.hardwareCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hardwareCpu) state.hardwareRam = selectClosest(byId("hardware-ram-input"), state.hardwareCpu["Max RAM (GB)"]); renderHardwareView(); });
   byId("hardware-gpu-select").addEventListener("change", (event) => { state.hardwareGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.hardwareGpu) { state.hardware = state.hardwareGpu; state.hardwareKind = "gpu"; state.hardwareVram = Number(state.hardwareGpu["Memory (GB)"]); byId("hardware-vram-input").value = state.hardwareVram; byId("hardware-search").value = state.hardwareGpu.Accelerator; } renderHardwareView(); });
   byId("hardware-ram-input").addEventListener("input", (event) => { state.hardwareRam = Number(event.target.value); renderHardwareView(); });
   byId("hardware-vram-input").addEventListener("input", (event) => { state.hardwareVram = Number(event.target.value); renderHardwareView(); });

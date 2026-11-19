@@ -44,8 +44,7 @@
       <div class="control-strip">
         <label class="control model-control">
           <span>Model</span>
-          <span class="select-wrap"><input id="model-search" type="search" value="Qwen3 32B" autocomplete="off" aria-controls="model-menu" aria-expanded="false"><i data-lucide="search"></i></span>
-          <div class="search-menu" id="model-menu" role="listbox" hidden></div>
+          <select id="model-search" aria-label="Model catalog"></select>
         </label>
         <label class="control">
           <span>Quantization</span>
@@ -54,17 +53,12 @@
         <label class="control">
           <span>Context</span>
           <select id="context-select">
-            <option value="4096">4K</option>
-            <option value="8192" selected>8K</option>
-            <option value="16384">16K</option>
-            <option value="32768">32K</option>
-            <option value="65536">64K</option>
-            <option value="131072">128K</option>
+            <option value="2048">2K</option><option value="4096">4K</option><option value="8192" selected>8K</option><option value="16384">16K</option><option value="32768">32K</option><option value="65536">64K</option><option value="131072">128K</option><option value="262144">256K</option>
           </select>
         </label>
         <label class="control">
           <span>Users</span>
-          <select id="user-select"><option>1</option><option>2</option><option>4</option><option>8</option></select>
+          <select id="user-select"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option><option>64</option><option>128</option></select>
         </label>
         <label class="control vendor-control">
           <span>Hardware</span>
@@ -90,16 +84,16 @@
           <label>Runtime / library<select id="runtime-select"><option>llama.cpp</option><option>Ollama</option><option>LM Studio</option><option>vLLM</option><option>SGLang</option><option>TensorRT-LLM</option><option>ExLlamaV2 / V3</option><option>MLX / mlx-lm</option><option>OpenVINO GenAI</option><option>IPEX-LLM</option></select></label>
           <label>Primary application<select id="task-select"><option>General chat / Q&A</option><option>RAG / document Q&A</option><option>Coding</option><option>Maths / reasoning</option><option>Agents / tool calling</option><option>Vision (image + text)</option><option>Classification / extraction</option><option>Translation / multilingual</option></select></label>
           <label>KV-cache bits<select id="kv-bits-select"><option value="4">4-bit</option><option value="8" selected>8-bit</option><option value="16">16-bit FP16</option></select></label>
-          <label>Typical prompt tokens<input id="prompt-length-input" type="number" min="128" step="128" value="2048"></label>
-          <label>Typical answer tokens<input id="answer-length-input" type="number" min="16" step="16" value="256"></label>
+          <label>Typical prompt tokens<select id="prompt-length-input"><option>128</option><option>512</option><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option><option>16384</option><option>32768</option></select></label>
+          <label>Typical answer tokens<select id="answer-length-input"><option>64</option><option>128</option><option selected>256</option><option>512</option><option>1024</option><option>2048</option></select></label>
           <label>CPU offload<select id="offload-select"><option value="N" selected>No</option><option value="Y">Yes</option></select></label>
-          <label>GPU quantity<input id="gpu-quantity-input" type="number" min="1" max="8" value="1"></label>
+          <label>GPU quantity<select id="gpu-quantity-input"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
           <label>Host CPU<select id="host-cpu-select"><option value="">Auto / none</option></select></label>
-          <label>Installed host RAM (GB)<input id="host-ram-input" type="number" min="0" step="8" placeholder="From CPU"></label>
-          <label>Maximum CPU base power (W)<input id="cpu-power-input" type="number" min="1" max="1000" value="500"></label>
-          <label>PCIe width<select id="pcie-width-select"><option>Auto</option><option>x4</option><option>x8</option><option>x16</option></select></label>
+          <label>Installed host RAM (GB)<select id="host-ram-input"><option value="0">From CPU</option><option>8</option><option>16</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>384</option><option>512</option><option>768</option><option>1024</option><option>2048</option></select></label>
+          <label>Maximum CPU base power (W)<select id="cpu-power-input"><option>6</option><option>10</option><option>15</option><option>25</option><option>28</option><option>45</option><option>55</option><option>65</option><option>125</option><option>150</option><option>175</option><option>250</option><option selected>500</option></select></label>
+          <label>PCIe width<select id="pcie-width-select"><option>Auto</option><option>x16 per card</option><option>x8 per card (minimum)</option></select></label>
           <label>Preferred accelerator<select id="preferred-gpu-select"><option value="">No preference</option></select></label>
-          <label>Device VRAM override (GB)<input id="device-vram-input" type="number" min="0" step="1" placeholder="Catalog VRAM"></label>
+          <label>Device VRAM override (GB)<select id="device-vram-input"><option value="0">Catalog VRAM</option><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
         </div>
         <div class="profile-note" id="profile-note"></div>
       </details>
@@ -136,7 +130,7 @@
 
         <aside class="target-panel" aria-label="Performance target">
           <label for="target-input">Target decode speed</label>
-          <div class="target-value"><input id="target-input" type="number" min="1" max="200" value="20"><span>tok/s</span></div>
+          <div class="target-value"><select id="target-input"><option>5</option><option>10</option><option>15</option><option selected>20</option><option>30</option><option>50</option><option>100</option></select><span>tok/s</span></div>
           <p>Rows meeting both memory capacity and this estimated decode target are marked <b>Meets target</b>.</p>
         </aside>
       </div>
@@ -161,29 +155,29 @@
     <section class="workspace page-view" id="hardware-page" aria-labelledby="hardware-page-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Hardware-led selector</p><h1 id="hardware-page-title">Start with the machine. See the models.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Single-device compatibility view</span></div></div>
       <div class="control-strip hardware-controls">
-        <label class="control hardware-search-control"><span>Hardware</span><span class="select-wrap"><input id="hardware-search" type="search" value="Intel Arc Pro B60" autocomplete="off" aria-controls="hardware-menu" aria-expanded="false"><i data-lucide="search"></i></span><div class="search-menu" id="hardware-menu" role="listbox" hidden></div></label>
+        <label class="control hardware-search-control"><span>Hardware</span><select id="hardware-search" aria-label="Hardware catalog"></select></label>
         <label class="control"><span>Quantization</span><select id="hardware-quant-select"></select></label>
-        <label class="control"><span>Context</span><select id="hardware-context-select"><option value="4096">4K</option><option value="8192" selected>8K</option><option value="16384">16K</option><option value="32768">32K</option><option value="65536">64K</option><option value="131072">128K</option></select></label>
-        <label class="control"><span>Users</span><select id="hardware-user-select"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
-        <label class="control"><span>Target tok/s</span><input id="hardware-target-input" type="number" min="1" max="200" value="20"></label>
+        <label class="control"><span>Context</span><select id="hardware-context-select"><option value="2048">2K</option><option value="4096">4K</option><option value="8192" selected>8K</option><option value="16384">16K</option><option value="32768">32K</option><option value="65536">64K</option><option value="131072">128K</option></select></label>
+        <label class="control"><span>Users</span><select id="hardware-user-select"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option><option>64</option></select></label>
+        <label class="control"><span>Target tok/s</span><select id="hardware-target-input"><option>5</option><option>10</option><option>15</option><option selected>20</option><option>30</option><option>50</option></select></label>
       </div>
       <div class="secondary-filters"><button class="intel-only" id="hardware-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button><label>Model vendor <select id="hardware-model-vendor-filter"><option value="all">All</option></select></label><label>Model type <select id="hardware-model-type-filter"><option value="all">All</option></select></label><label>Show <select id="hardware-model-filter"><option value="fits">Fits in memory</option><option value="fast">Meets speed target</option><option value="all">All models</option></select></label></div>
       <details class="advanced-controls" open>
         <summary><span><i data-lucide="server"></i> Selected CPU, GPU and AI workload</span><small>Hardware-led Excel inputs</small></summary>
         <div class="profile-grid">
           <label>CPU<select id="hardware-cpu-select"></select></label>
-          <label>Installed RAM (GB)<input id="hardware-ram-input" type="number" min="0" step="8"></label>
+          <label>Installed RAM (GB)<select id="hardware-ram-input"><option>8</option><option>16</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>384</option><option>512</option><option>768</option><option>1024</option><option>2048</option></select></label>
           <label>GPU<select id="hardware-gpu-select"></select></label>
-          <label>GPU VRAM (GB)<input id="hardware-vram-input" type="number" min="0" step="1"></label>
-          <label>GPU quantity<input id="hardware-gpu-quantity-input" type="number" min="1" max="8" value="1"></label>
+          <label>GPU VRAM (GB)<select id="hardware-vram-input"><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>48</option><option>64</option><option>96</option><option>128</option><option>160</option><option>192</option><option>256</option><option>480</option><option>512</option><option>960</option></select></label>
+          <label>GPU quantity<select id="hardware-gpu-quantity-input"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
           <label>Runtime / library<select id="hardware-runtime-select"><option>llama.cpp</option><option>Ollama</option><option>LM Studio</option><option>vLLM</option><option>SGLang</option><option>TensorRT-LLM</option><option>ExLlamaV2 / V3</option><option>MLX / mlx-lm</option><option>OpenVINO GenAI</option><option>IPEX-LLM</option></select></label>
           <label>Primary application<select id="hardware-task-select"><option>General chat / Q&A</option><option>RAG / document Q&A</option><option>Coding</option><option>Maths / reasoning</option><option>Agents / tool calling</option><option>Vision (image + text)</option><option>Classification / extraction</option><option>Translation / multilingual</option></select></label>
           <label>KV-cache bits<select id="hardware-kv-bits-select"><option value="4">4-bit</option><option value="8" selected>8-bit</option><option value="16">16-bit FP16</option></select></label>
-          <label>CPU offload<select id="hardware-offload-select"><option value="N">No</option><option value="Y" selected>Yes</option></select></label>
-          <label>Typical prompt tokens<input id="hardware-prompt-input" type="number" min="128" step="128" value="2048"></label>
-          <label>Typical answer tokens<input id="hardware-answer-input" type="number" min="16" step="16" value="256"></label>
-          <label>Memory headroom (%)<input id="memory-headroom-input" type="number" min="0" max="90" value="10"></label>
-          <label>Bandwidth utilization (%)<input id="bandwidth-util-input" type="number" min="1" max="100" value="100"></label>
+          <label>CPU offload<select id="hardware-offload-select"><option value="N" selected>No</option><option value="Y">Yes</option></select></label>
+          <label>Typical prompt tokens<select id="hardware-prompt-input"><option>128</option><option>512</option><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option><option>16384</option><option>32768</option></select></label>
+          <label>Typical answer tokens<select id="hardware-answer-input"><option>64</option><option>128</option><option selected>256</option><option>512</option><option>1024</option><option>2048</option></select></label>
+          <label>Memory headroom (%)<select id="memory-headroom-input"><option>0</option><option>5</option><option selected>8</option><option>10</option><option>15</option><option>20</option></select></label>
+          <label>Bandwidth utilization (%)<select id="bandwidth-util-input"><option>25</option><option>50</option><option>75</option><option selected>100</option></select></label>
         </div>
         <div class="profile-note" id="hardware-profile-note"></div>
       </details>
