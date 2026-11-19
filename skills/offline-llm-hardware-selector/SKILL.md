@@ -63,6 +63,6 @@ Use the website's catalog dropdowns exactly; do not permit arbitrary CPU/GPU/mem
 ## Guard-rails
 
 - Never invent a spec. If the vendor page is JS-only or retired (many GeForce 10/16/20 pages, Qualcomm), say "vendor page unavailable" and mark the row amber.
-- Pre-production or NDA hardware must not enter the public CSVs; keep such rows in a private copy.
+- Nova Lake (NVL) and Crescent Island (CRI) may be shown only as explicitly labelled `Pre-release planning / public source pending` rows, with internal IDs, pricing, availability notes and private source references removed. PTL/RZL and other private SKUs remain excluded.
 - Prices are not tracked here (the workbook's indicative prices were unsourced placeholders).
 - Quote values with units exactly as the source states them (GB/s vs GiB, TGP vs TBP, cTDP ranges).

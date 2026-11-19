@@ -174,10 +174,13 @@ function cpuUsable(hardware) {
 function isIntelHardware(row, kind = "gpu") {
   if (kind === "gpu") return row.Vendor === "Intel";
   const name = String(row["CPU / platform"] || "");
-  return /^(Intel |Core Ultra|Core i[3579]|Xeon )|\bCore Ultra\b|\bXeon\b/.test(name);
+  return name.startsWith("NVL") || /^(Intel |Core Ultra|Core i[3579]|Xeon )|\bCore Ultra\b|\bXeon\b/.test(name);
 }
 
 function cpuGeneration(name) {
+  if (name.startsWith("NVL-BGA")) return "Nova Lake-BGA";
+  if (name.startsWith("NVL-S")) return "Nova Lake-S";
+  if (name.startsWith("NVL-E")) return "Nova Lake-E Xeon";
   const map = {
     "Intel N100 mini-PC": "Alder Lake-N",
     "Intel N150 mini-PC": "Twin Lake",
@@ -204,8 +207,12 @@ function cpuCatalogLabel(row) {
   return `${row["CPU / platform"]}${generation ? ` · ${generation}` : ""} · ${row.Class} · ${row.Cores}C · ${row["Base / default power (W)"]}/${row["Max turbo / max power (W)"]}W · ${row.Memory} · ${row["Memory BW (GB/s)"]} GB/s · ${row["Max RAM (GB)"]} GB RAM · ${row["CPU PCIe lanes"]} PCIe lanes`;
 }
 
+function gpuDisplayName(name) {
+  return name.startsWith("Intel CRI") ? name.replace("Intel CRI", "Intel Crescent Island") : name;
+}
+
 function gpuCatalogLabel(row) {
-  return `${row.Accelerator} · ${row["Memory (GB)"]} GB · ${row["Bandwidth (GB/s)"]} GB/s · ${row["TDP / board power (W)"]}W · ${row.Interface} · ${row.Architecture}`;
+  return `${gpuDisplayName(row.Accelerator)} · ${row["Memory (GB)"]} GB · ${row["Bandwidth (GB/s)"]} GB/s · ${row["TDP / board power (W)"]}W · ${row.Interface} · ${row.Architecture}`;
 }
 
 function rebuildCatalogSelect(id, rows, key, label, placeholder, filterKind) {
@@ -290,7 +297,8 @@ function hardwareRows() {
     .filter((row) => state.legacy || String(row["Used / legacy?"]).toLowerCase() !== "yes")
     .map((row) => ({
       raw: row,
-      name: row.Accelerator,
+      name: gpuDisplayName(row.Accelerator),
+      value: row.Accelerator,
       vendor: row.Vendor,
       subtitle: `${row.Architecture} · ${row.Interface} · ${state.runtime}`,
       memory: gpuUsable(row) + hostOffloadGb(),
@@ -537,7 +545,7 @@ function renderParityAudit() {
 }
 
 function hardwarePool() {
-  const gpus = state.data.gpus.map((row) => ({ raw: row, kind: "gpu", name: row.Accelerator }));
+  const gpus = state.data.gpus.map((row) => ({ raw: row, kind: "gpu", name: gpuDisplayName(row.Accelerator), value: row.Accelerator }));
   const cpus = state.data.cpus.map((row) => ({ row, raw: row, kind: "cpu", name: row["CPU / platform"] }));
   return [...gpus, ...cpus];
 }
@@ -579,7 +587,7 @@ function setHardware(item) {
   state.hardwareKind = item.kind;
   if (item.kind === "gpu") {
     state.hardwareGpu = item.raw;
-    byId("hardware-gpu-select").value = item.name;
+    byId("hardware-gpu-select").value = item.value || item.raw.Accelerator;
     state.hardwareVram = Number(item.raw["Memory (GB)"]);
     byId("hardware-vram-input").value = state.hardwareVram;
   } else {
@@ -608,7 +616,7 @@ function showHardwareSearch() { refreshHardwareDropdown(); }
 function closeHardwareSearch() {}
 
 function currentHardwareItem() {
-  return { raw: state.hardware, kind: state.hardwareKind, name: state.hardwareKind === "gpu" ? state.hardware.Accelerator : state.hardware["CPU / platform"] };
+  return { raw: state.hardware, kind: state.hardwareKind, name: state.hardwareKind === "gpu" ? gpuDisplayName(state.hardware.Accelerator) : state.hardware["CPU / platform"] };
 }
 
 function compatibleModels(item) {
@@ -633,7 +641,8 @@ function renderHardwareView() {
   const taskMinimum = taskRules[state.hardwareTask] || taskRules["General chat / Q&A"];
   byId("hardware-profile-note").textContent = `${state.hardwareTask}: model rows below the task quant floor are not shown as meeting the speed target. ${state.hardwareOffload === "Y" && state.hardwareCpu ? `CPU offload may use ${decimal.format(Number(byId("hardware-ram-input").value || state.hardwareCpu["Max RAM (GB)"]))} GB host RAM.` : "CPU offload disabled."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
   const summary = byId("hardware-summary");
-  summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div>`;
+  const planning = String(item.raw["Evidence status"] || "").includes("Pre-release planning");
+  summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}${planning ? " · PRE-RELEASE PLANNING" : ""}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div>`;
   summary.querySelector("#show-hardware-evidence").addEventListener("click", () => openEvidence(item.raw, item.kind));
   const host = byId("hardware-model-results");
   host.replaceChildren();
@@ -853,7 +862,7 @@ function bindEvents() {
   byId("hardware-user-select").addEventListener("change", (event) => { state.hardwareUsers = Number(event.target.value); renderHardwareView(); });
   byId("hardware-target-input").addEventListener("input", (event) => { state.hardwareTarget = Number(event.target.value) || 20; renderHardwareView(); });
   byId("hardware-cpu-select").addEventListener("change", (event) => { state.hardwareCpu = state.data.cpus.find((row) => row["CPU / platform"] === event.target.value) || null; if (state.hardwareCpu) state.hardwareRam = selectClosest(byId("hardware-ram-input"), state.hardwareCpu["Max RAM (GB)"]); renderHardwareView(); });
-  byId("hardware-gpu-select").addEventListener("change", (event) => { state.hardwareGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.hardwareGpu) { state.hardware = state.hardwareGpu; state.hardwareKind = "gpu"; state.hardwareVram = Number(state.hardwareGpu["Memory (GB)"]); byId("hardware-vram-input").value = state.hardwareVram; byId("hardware-search").value = state.hardwareGpu.Accelerator; } renderHardwareView(); });
+  byId("hardware-gpu-select").addEventListener("change", (event) => { state.hardwareGpu = state.data.gpus.find((row) => row.Accelerator === event.target.value) || null; if (state.hardwareGpu) { state.hardware = state.hardwareGpu; state.hardwareKind = "gpu"; state.hardwareVram = Number(state.hardwareGpu["Memory (GB)"]); byId("hardware-vram-input").value = state.hardwareVram; byId("hardware-search").value = gpuDisplayName(state.hardwareGpu.Accelerator); } renderHardwareView(); });
   byId("hardware-ram-input").addEventListener("input", (event) => { state.hardwareRam = Number(event.target.value); renderHardwareView(); });
   byId("hardware-vram-input").addEventListener("input", (event) => { state.hardwareVram = Number(event.target.value); renderHardwareView(); });
   byId("hardware-gpu-quantity-input").addEventListener("input", (event) => { state.hardwareGpuQuantity = Number(event.target.value); renderHardwareView(); });

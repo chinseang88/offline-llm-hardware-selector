@@ -9,8 +9,10 @@ import argparse, csv, pathlib, re, warnings
 import openpyxl
 
 warnings.filterwarnings("ignore")
-PRIVATE_ROW_PREFIXES = ("Intel CRI", "NVL", "PTL", "RZL")   # pre-production SKUs kept in the private workbook only
+PRIVATE_ROW_PREFIXES = ("PTL", "RZL")   # still excluded from the public export
+PUBLIC_PREVIEW_ROW_PREFIXES = ("NVL", "Intel CRI")
 CONFIDENTIAL_ROW = re.compile(r"^(" + "|".join(PRIVATE_ROW_PREFIXES) + r")", re.I)
+PUBLIC_PREVIEW_ROW = re.compile(r"^(" + "|".join(PUBLIC_PREVIEW_ROW_PREFIXES) + r")", re.I)
 CONFIDENTIAL_TEXT = re.compile(r"Intel Confidential|playbook|EDS \d+|Gold deck|\b(8|9)\d{5}\b|Xe3P/CRI,?\s?", re.I)
 
 SHEETS = {
@@ -60,7 +62,17 @@ def main():
                     continue
                 if CONFIDENTIAL_ROW.search(str(key)):
                     continue
-                w.writerow([clean(ws.cell(r, hm[c]).value) for c in cols]); n += 1
+                values = [clean(ws.cell(r, hm[c]).value) for c in cols]
+                if PUBLIC_PREVIEW_ROW.search(str(key)):
+                    if fname == "cpus":
+                        values[10] = "Nova Lake pre-release planning SKU; internal document IDs, availability, and pricing removed. Public-source verification pending."
+                        values[13] = ""
+                        values[14] = "Pre-release planning / public source pending"
+                    elif fname == "gpus":
+                        values[6] = "Crescent Island pre-release planning SKU; internal document IDs, availability, and pricing removed. Public-source verification pending."
+                        values[13] = ""
+                        values[14] = "Pre-release planning / public source pending"
+                w.writerow(values); n += 1
         print(f"{fname}.csv: {n} rows")
     # evidence log
     if "Evidence" in wb.sheetnames:
@@ -74,8 +86,14 @@ def main():
                 row = [ws.cell(r, c).value for c in range(1, 13)]
                 if row[0] is None:
                     continue
-                if CONFIDENTIAL_ROW.search(str(row[1])) or str(row[7]).startswith("PLACEHOLDER") or str(row[7]) == "INTERNAL SOURCE":
+                is_preview = PUBLIC_PREVIEW_ROW.search(str(row[1]))
+                if CONFIDENTIAL_ROW.search(str(row[1])) or str(row[7]).startswith("PLACEHOLDER") or (str(row[7]) == "INTERNAL SOURCE" and not is_preview):
                     continue
+                if is_preview and str(row[7]) == "INTERNAL SOURCE":
+                    row[7] = "PLANNING / PUBLIC SOURCE PENDING"
+                    row[8] = "Intel pre-release planning row (private workbook)"
+                    row[9] = ""
+                    row[10] = "Public selector restored by explicit request; internal document IDs, prices and availability notes removed. Verify before product commitment."
                 w.writerow([clean(v) for v in row]); n += 1
         print(f"evidence.csv: {n} rows")
 
