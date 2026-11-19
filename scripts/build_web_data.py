@@ -16,6 +16,7 @@ NUMERIC = {
     "Memory (GB)", "Bandwidth (GB/s)", "TDP / board power (W)", "CUDA compute capability",
     "Cores", "Base / default power (W)", "Max turbo / max power (W)", "Memory BW (GB/s)",
     "Max RAM (GB)", "CPU PCIe lanes", "Bits / weight", "Bits/weight (eff.)", "GB per 1B params",
+    "Total params (B)", "Active params (B)", "Tier", "Reference rank",
 }
 
 
@@ -41,6 +42,7 @@ def main():
         "gpus": load_rows("gpus"),
         "cpus": load_rows("cpus"),
         "quants": load_rows("quant"),
+        "referenceModels": load_rows("reference_models"),
         "evidence": evidence,
         "factsByItem": source_facts(evidence),
     }
@@ -50,7 +52,7 @@ def main():
     parity_output.write_text(json.dumps(calculate_parity(), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"wrote {output} ({output.stat().st_size / 1024:.1f} KiB)")
     print(f"wrote {parity_output} ({parity_output.stat().st_size / 1024:.1f} KiB)")
-    print(f"rows: {len(payload['models'])} models, {len(payload['gpus'])} GPUs, {len(payload['cpus'])} CPUs, {len(evidence)} evidence checks")
+    print(f"rows: {len(payload['models'])} models, {len(payload['referenceModels'])} reference models, {len(payload['gpus'])} GPUs, {len(payload['cpus'])} CPUs, {len(evidence)} evidence checks")
 
 
 if __name__ == "__main__":

@@ -258,6 +258,10 @@ h1 { max-width: 780px; margin: 0; font-size: clamp(36px, 5vw, 72px); line-height
 .model-education, .benchmark-note p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .benchmark-note { margin: 0 0 24px; padding: 16px; border-left: 4px solid var(--amber); background: var(--amber-soft); }
 .benchmark-note strong { font-size: 14px; }
+.reference-note { margin: 0 0 24px; padding: 16px; border-left: 4px solid var(--lime); background: var(--lime-soft); }
+.reference-note strong { font-size: 16px; }
+.reference-note p, .reference-note small { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.reference-note .drawer-links { margin-top: 10px; margin-bottom: 0; }
 .fact-list { border-top: 1px solid var(--line); }
 .fact-row { display: grid; grid-template-columns: 140px 1fr; padding: 15px 0; border-bottom: 1px solid var(--line); gap: 15px; }
 .fact-row h3 { margin: 0; font-size: 13px; }

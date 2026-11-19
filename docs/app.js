@@ -604,6 +604,14 @@ function openEvidence(row, kind) {
     profile.innerHTML = `<p class="section-label">Model 360</p><div class="model-360-grid"><div><small>Parameters</small><strong>${decimal.format(row["Total params (B)"])}B</strong><span>${decimal.format(row["Active params (B)"])}B active</span></div><div><small>Architecture</small><strong>${escapeHtml(row["Runtime arch"] || row.Type || "—")}</strong><span>${row.Layers || "—"} layers · ${row["KV heads"] || "—"} KV heads</span></div><div><small>Current workload</small><strong>${decimal.format(need.total)} GB</strong><span>${state.bits}-bit · ${state.context.toLocaleString()} context</span></div><div><small>Published context</small><strong>${Number(row["Max context"]) ? Number(row["Max context"]).toLocaleString() : "—"}</strong><span>${escapeHtml(row.License || "License pending")}</span></div></div><p class="model-education">Parameter count determines checkpoint size; active parameters drive compute traffic; context, KV heads, and head dimension determine KV-cache growth. Architecture and runtime support decide which inference engines can execute the model.</p>`;
     content.append(profile);
 
+    const reference = referenceForModel(row);
+    if (reference) {
+      const lineage = document.createElement("section");
+      lineage.className = "reference-note";
+      lineage.innerHTML = `<p class="section-label">Reference catalog · public evidence</p><div><strong>Tier ${escapeHtml(reference.Tier)}${reference["Reference rank"] && reference["Reference rank"] !== "-" ? ` · ranked #${escapeHtml(reference["Reference rank"])}` : " · unranked"}</strong><p>${escapeHtml(reference.Family)} · ${escapeHtml(reference["Architecture"])} · ${escapeHtml(reference["Total params (B)"])}B total / ${escapeHtml(reference["Active params (B)"])}B active</p><p>Released ${escapeHtml(reference["Release date"] || "date pending")} · ${escapeHtml(reference.License)} · ${escapeHtml(reference["Context (max)"])} context</p></div><div class="drawer-links">${reference["Model card URL"] ? `<a href="${escapeHtml(reference["Model card URL"])}" target="_blank" rel="noreferrer">Publisher model card ↗</a>` : ""}${reference["GGUF repository URL"] ? `<a href="${escapeHtml(reference["GGUF repository URL"])}" target="_blank" rel="noreferrer">GGUF repository ↗</a>` : ""}${reference["License source URL"] ? `<a href="${escapeHtml(reference["License source URL"])}" target="_blank" rel="noreferrer">License source ↗</a>` : ""}</div><small>Measured quality, timing, memory, and platform results remain withheld because the reference export is redacted/internal.</small>`;
+      content.append(lineage);
+    }
+
     const benchmarkFacts = facts.filter((fact) => /benchmark|tok\/s|throughput|latency|measured|ttft|decode/i.test(`${fact.Parameter} ${fact.Note} ${fact["Source type"]}`));
     const benchmark = document.createElement("section");
     benchmark.className = "benchmark-note";
@@ -855,6 +863,15 @@ function populateFilterOptions() {
   setHardware(defaultHardware);
   selectGlobalGpu(null, { renderHardware: false });
   refreshModelDropdown();
+}
+
+function normalizeReferenceName(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9.]+/g, "");
+}
+
+function referenceForModel(row) {
+  const target = normalizeReferenceName(row.Model);
+  return state.data.referenceModels.find((reference) => normalizeReferenceName(reference.Model) === target || normalizeReferenceName(reference.Family) === target) || null;
 }
 
 function databaseRows() {
