@@ -592,7 +592,16 @@ function openEvidence(row, kind) {
   title.textContent = item;
   content.replaceChildren();
 
+  if (kind === "model") {
+    const tabs = document.createElement("div");
+    tabs.className = "knowledge-tabs";
+    tabs.innerHTML = `<button class="active" data-knowledge-tab="overview">Model 360</button><button data-knowledge-tab="latest">Latest models</button><button data-knowledge-tab="evidence">Evidence</button><button data-knowledge-tab="learning">Learning</button>`;
+    content.append(tabs);
+  }
+
   const intro = document.createElement("p");
+  intro.className = "knowledge-view";
+  intro.dataset.knowledgeView = "overview";
   intro.textContent = facts.length
     ? `${facts.length} source checks are recorded for this row. Status reflects the public evidence log, not a claim of benchmark validation.`
     : "No parameter-level evidence records were found for this public row.";
@@ -600,7 +609,8 @@ function openEvidence(row, kind) {
 
   if (kind === "model") {
     const profile = document.createElement("section");
-    profile.className = "model-360";
+    profile.className = "model-360 knowledge-view";
+    profile.dataset.knowledgeView = "overview";
     const need = memoryNeed(row);
     profile.innerHTML = `<p class="section-label">Model 360</p><div class="model-360-grid"><div><small>Parameters</small><strong>${decimal.format(row["Total params (B)"])}B</strong><span>${decimal.format(row["Active params (B)"])}B active</span></div><div><small>Architecture</small><strong>${escapeHtml(row["Runtime arch"] || row.Type || "—")}</strong><span>${row.Layers || "—"} layers · ${row["KV heads"] || "—"} KV heads</span></div><div><small>Current workload</small><strong>${decimal.format(need.total)} GB</strong><span>${state.bits}-bit · ${state.context.toLocaleString()} context</span></div><div><small>Published context</small><strong>${Number(row["Max context"]) ? Number(row["Max context"]).toLocaleString() : "—"}</strong><span>${escapeHtml(row.License || "License pending")}</span></div></div><p class="model-education">Parameter count determines checkpoint size; active parameters drive compute traffic; context, KV heads, and head dimension determine KV-cache growth. Architecture and runtime support decide which inference engines can execute the model.</p>`;
     content.append(profile);
@@ -608,7 +618,8 @@ function openEvidence(row, kind) {
     const reference = referenceForModel(row);
     if (reference) {
       const lineage = document.createElement("section");
-      lineage.className = "reference-note";
+      lineage.className = "reference-note knowledge-view";
+      lineage.dataset.knowledgeView = "latest";
       lineage.innerHTML = `<p class="section-label">Reference catalog · public evidence</p><div><strong>Tier ${escapeHtml(reference.Tier)}${reference["Reference rank"] && reference["Reference rank"] !== "-" ? ` · ranked #${escapeHtml(reference["Reference rank"])}` : " · unranked"}</strong><p>${escapeHtml(reference.Family)} · ${escapeHtml(reference["Architecture"])} · ${escapeHtml(reference["Total params (B)"])}B total / ${escapeHtml(reference["Active params (B)"])}B active</p><p>Released ${escapeHtml(reference["Release date"] || "date pending")} · ${escapeHtml(reference.License)} · ${escapeHtml(reference["Context (max)"])} context</p></div><div class="drawer-links">${reference["Model card URL"] ? `<a href="${escapeHtml(reference["Model card URL"])}" target="_blank" rel="noreferrer">Publisher model card ↗</a>` : ""}${reference["GGUF repository URL"] ? `<a href="${escapeHtml(reference["GGUF repository URL"])}" target="_blank" rel="noreferrer">GGUF repository ↗</a>` : ""}${reference["License source URL"] ? `<a href="${escapeHtml(reference["License source URL"])}" target="_blank" rel="noreferrer">License source ↗</a>` : ""}</div><small>Measured quality, timing, memory, and platform results remain withheld because the reference export is redacted/internal.</small>`;
       content.append(lineage);
     }
@@ -618,7 +629,8 @@ function openEvidence(row, kind) {
       const platformById = new Map(state.privateReference.platforms.map((platform) => [platform.platform_id, platform]));
       const servingByRun = new Map(state.privateReference.serving.map((run) => [run.run_id, run]));
       const benchmark = document.createElement("section");
-      benchmark.className = "private-benchmark";
+      benchmark.className = "private-benchmark knowledge-view";
+      benchmark.dataset.knowledgeView = "overview";
       const bestRuns = [...privateRuns].sort((a, b) => Number(b.decode_tps || 0) - Number(a.decode_tps || 0)).slice(0, 8);
       benchmark.innerHTML = `<p class="section-label">Measured performance · local private evidence</p><div class="private-benchmark-summary"><strong>${privateRuns.length} measured runs</strong><span>${new Set(privateRuns.map((run) => run.platform_id)).size} platforms · quality, speed, timing, and provenance retained</span></div><div class="private-run-list">${bestRuns.map((run) => {
         const platform = platformById.get(run.platform_id) || {};
@@ -630,7 +642,8 @@ function openEvidence(row, kind) {
     } else {
       const benchmarkFacts = facts.filter((fact) => /benchmark|tok\/s|throughput|latency|measured|ttft|decode/i.test(`${fact.Parameter} ${fact.Note} ${fact["Source type"]}`));
       const benchmark = document.createElement("section");
-      benchmark.className = "benchmark-note";
+      benchmark.className = "benchmark-note knowledge-view";
+      benchmark.dataset.knowledgeView = "overview";
       benchmark.innerHTML = `<p class="section-label">Measured performance</p><strong>${benchmarkFacts.length ? `${benchmarkFacts.length} measured-performance records` : "No public measured benchmark is available"}</strong><p>${benchmarkFacts.length ? "Open each record below for the measured machine, runtime, precision, workload, and source citation." : "The tok/s values in the selector are bandwidth-model estimates, not measurements. The reference site has private/redacted measurements; they are available locally only and omitted from the public build."}</p>`;
       content.append(benchmark);
     }
@@ -639,7 +652,8 @@ function openEvidence(row, kind) {
   const sourceUrls = urlList(row["Source URL"]);
   if (sourceUrls.length) {
     const links = document.createElement("div");
-    links.className = "drawer-links";
+    links.className = `drawer-links${kind === "model" ? " knowledge-view" : ""}`;
+    if (kind === "model") links.dataset.knowledgeView = "evidence";
     for (const url of sourceUrls) {
       const link = document.createElement("a");
       link.href = url;
@@ -653,7 +667,8 @@ function openEvidence(row, kind) {
 
   if (facts.length) {
     const list = document.createElement("div");
-    list.className = "fact-list";
+    list.className = "fact-list knowledge-view";
+    list.dataset.knowledgeView = "evidence";
     for (const fact of facts) {
       const block = document.createElement("article");
       block.className = "fact-row";
@@ -683,6 +698,27 @@ function openEvidence(row, kind) {
       list.append(block);
     }
     content.append(list);
+  }
+
+  if (kind === "model") {
+    const latest = document.createElement("section");
+    latest.className = "latest-learning knowledge-view";
+    latest.dataset.knowledgeView = "latest";
+    latest.innerHTML = `<p class="section-label">Verified latest releases</p><div class="latest-model-grid"><article><span>QWEN</span><strong>Qwen3.8 Flash-Next 180B-A6B</strong><p>Official Qwen 4-architecture preview · 6B active · 262K context</p></article><article><span>GOOGLE</span><strong>Gemma 4 E2B / E4B</strong><p>Official multimodal edge models · 128K context · effective parameter sizing</p></article><article><span>HUGGING FACE BIO</span><strong>Carbon-X · 3B · 8B · 500M</strong><p>DNA + language models · Apache 2.0 · genomics-specific runtime notes</p></article></div><small>“Gemini 4 Hydrogen” and “Gemini 4 Carbon” are excluded: the public uploads are results cards or one-parameter toy repos, not verified Google model weights.</small>`;
+    content.append(latest);
+
+    const learning = document.createElement("section");
+    learning.className = "learning-panel knowledge-view";
+    learning.dataset.knowledgeView = "learning";
+    learning.innerHTML = `<p class="section-label">How to learn a model</p><ol><li><b>Identify the artifact.</b><span>Publisher, model family, release date, exact Hugging Face repository and revision.</span></li><li><b>Separate total from active.</b><span>Total parameters drive memory; active parameters drive decode compute.</span></li><li><b>Calculate the full fit.</b><span>Weights + KV cache + runtime overhead, not file size alone.</span></li><li><b>Check the workload.</b><span>General chat, coding, vision, agents and DNA models need different minimums.</span></li><li><b>Verify measurement provenance.</b><span>Measured speed needs machine, runtime/build, quantization, context, workload, date and source.</span></li></ol>`;
+    content.append(learning);
+
+    content.querySelectorAll("[data-knowledge-tab]").forEach((button) => button.addEventListener("click", () => {
+      content.querySelectorAll("[data-knowledge-tab]").forEach((item) => item.classList.toggle("active", item === button));
+      const view = button.dataset.knowledgeTab;
+      content.querySelectorAll("[data-knowledge-view]").forEach((item) => item.hidden = item.dataset.knowledgeView !== view);
+    }));
+    content.querySelectorAll("[data-knowledge-view]").forEach((item) => item.hidden = item.dataset.knowledgeView !== "overview");
   }
 
   byId("drawer-scrim").hidden = false;
@@ -856,6 +892,7 @@ function showPage(page) {
   if (page === "hardware") renderHardwareView();
   if (page === "database") renderDatabase();
   if (page === "evidence") renderEvidence();
+  if (page === "knowledge") renderKnowledge();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -947,6 +984,26 @@ function preparePrivateMeasurements(payload) {
     "Evidence status": "MEASURED-INTERNAL / audit issue",
   }));
   return measurements;
+}
+
+function renderKnowledge() {
+  const featured = [
+    "Qwen3.8 Flash-Next 180B-A6B", "Gemma 4 E2B", "Gemma 4 E4B",
+    "Carbon-X 14.8B", "Carbon 3B", "Carbon 8B", "Carbon 500M",
+  ];
+  const host = byId("knowledge-latest-models");
+  host.replaceChildren();
+  const rows = featured.map((name) => state.data.models.find((row) => row.Model === name)).filter(Boolean);
+  for (const row of rows) {
+    const article = document.createElement("article");
+    article.className = "knowledge-model";
+    article.innerHTML = `<span class="knowledge-vendor">${escapeHtml(row.Vendor)}</span><h3>${escapeHtml(row.Model)}</h3><p>${escapeHtml(row.Type)} · ${decimal.format(row["Total params (B)"])}B total · ${decimal.format(row["Active params (B)"])}B active</p><div><span>${decimal.format(row["Max context"])} context</span><span>${escapeHtml(row.License)}</span></div><button class="text-button"><i data-lucide="arrow-up-right"></i><span>Know more</span></button>`;
+    article.querySelector("button").addEventListener("click", () => openEvidence(row, "model"));
+    host.append(article);
+  }
+  byId("knowledge-latest-count").textContent = `${rows.length} verified additions`;
+  byId("knowledge-evidence-count").textContent = `${state.data.evidence.length} checks`;
+  iconize();
 }
 
 function databaseRows() {
@@ -1220,6 +1277,11 @@ function bindEvents() {
     byId("evidence-sort-direction").querySelector("span").textContent = direction === "asc" ? "Ascending" : "Descending";
     renderEvidence();
   });
+  for (const button of $$(".knowledge-nav button")) button.addEventListener("click", () => {
+    $$(".knowledge-nav button").forEach((item) => { item.classList.toggle("active", item === button); item.setAttribute("aria-selected", String(item === button)); });
+    $$("[data-knowledge-page-content]").forEach((view) => view.hidden = view.dataset.knowledgePageContent !== button.dataset.knowledgePage);
+  });
+  for (const button of $$("[data-open-page]")) button.addEventListener("click", () => showPage(button.dataset.openPage));
   for (const button of $$(".status-filter")) button.addEventListener("click", () => {
     state.evidenceStatus = button.dataset.status;
     $$(".status-filter").forEach((item) => item.classList.toggle("active", item === button));
