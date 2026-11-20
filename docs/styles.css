@@ -230,6 +230,21 @@ h1 { max-width: 700px; margin: 0; font-size: 12px; line-height: 1; font-weight: 
 .learning-steps li > span { width: 42px; height: 42px; display: grid; place-items: center; color: var(--ink); background: var(--lime); font-family: var(--mono); font-weight: 700; }
 .learning-steps h3 { margin: 0 0 5px; }
 .learning-steps p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.learning-map { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 18px; border: 1px solid var(--line); background: var(--line); }
+.learning-map article { position: relative; min-height: 230px; padding: 22px; background: var(--surface); }
+.learning-step { color: var(--teal); font-family: var(--mono); font-size: 11px; }
+.learning-map h3 { margin: 10px 0 8px; font-size: 20px; }
+.learning-map p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.learning-map a { display: inline-block; margin-top: 8px; color: var(--blue); font-family: var(--mono); font-size: 10px; text-decoration: underline; }
+.learning-formula { padding: 10px 12px; border-left: 3px solid var(--lime); background: var(--lime-soft); font-family: var(--mono); color: var(--ink) !important; }
+.knowledge-glossary { margin-top: 34px; }
+.knowledge-glossary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 14px 0 0; border: 1px solid var(--line); background: var(--line); }
+.knowledge-glossary dl > div { padding: 15px; background: var(--surface); }
+.knowledge-glossary dt { font-family: var(--mono); color: var(--teal); font-size: 11px; }
+.knowledge-glossary dd { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.learning-sources { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin-top: 18px; padding: 14px; border: 1px solid var(--line-strong); background: var(--surface); }
+.learning-sources .section-label { flex-basis: 100%; margin: 0; }
+.learning-sources a { color: var(--blue); font-family: var(--mono); font-size: 10px; text-decoration: underline; }
 .data-toolbar, .evidence-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .data-toolbar label, .evidence-toolbar label { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
 .data-toolbar select, .evidence-toolbar select, .database-search, .secondary-button { min-height: 38px; border: 1px solid var(--line-strong); background: var(--surface); padding: 0 11px; }
@@ -347,7 +362,7 @@ dialog p:not(.section-label) { line-height: 1.55; color: var(--muted); }
   .site-header { height: auto; min-height: 57px; flex-wrap: wrap; padding-top: 9px; padding-bottom: 8px; }
   .brand { flex: 1 1 auto; }
   .header-nav { order: 3; width: 100%; max-width: 100%; overflow: hidden; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .knowledge-models, .evidence-legend { grid-template-columns: 1fr; }
+  .knowledge-models, .evidence-legend, .learning-map, .knowledge-glossary dl { grid-template-columns: 1fr; }
   .knowledge-flow { grid-template-columns: 1fr; }
   .knowledge-hero { grid-template-columns: 1fr; }
   .knowledge-section-head { align-items: flex-start; flex-direction: column; }
