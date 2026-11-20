@@ -44,7 +44,7 @@ Use the website's catalog dropdowns exactly; do not permit arbitrary CPU/GPU/mem
 
 1. Run the verifier for the affected table (a name filter limits the run):
    ```
-   python scripts/verify_models.py            # all models (≈170 rows, HF API)
+   python scripts/verify_models.py            # all models (177 rows, HF API)
    python scripts/verify_gpus.py "RTX 5090"   # one GPU
    python scripts/verify_cpus.py              # all CPUs
    python scripts/verify_misc.py              # voice models, quant table, NVMe constants

@@ -59,7 +59,7 @@ LICENSE_DISPLAY = {
     "llama3.2": "Llama 3.2", "llama3.3": "Llama 3.3", "llama4": "Llama 4", "mrl": "Mistral Research (MRL)",
     "mnpl": "Mistral Non-Production (MNPL)", "modified-mit": "Modified MIT", "glm-5.3": "GLM-5.3 Licence (custom)",
     "muse-model-license": "Muse Model License", "lfm1.0": "LFM Open License v1.0", "openmdw-1.1": "OpenMDW-1.1",
-    "qwen-research": "Qwen Research", "cc-by-nc-4.0": "CC-BY-NC-4.0", "deepseek": "DeepSeek Model License",
+    "qwen-research": "Qwen Research", "qwen-community-1.0": "Qwen Community 1.0", "cc-by-nc-4.0": "CC-BY-NC-4.0", "deepseek": "DeepSeek Model License",
     "qwen": "Qwen Licence", "bigcode-openrail-m": "BigCode OpenRAIL-M", "falcon-llm-license": "Falcon LLM License",
 }
 PLACEHOLDER_LIC = {"check licence", "model-specific", "check license", ""}

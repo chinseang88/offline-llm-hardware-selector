@@ -2,12 +2,12 @@
 
 Evidence-backed sizing tables and tools for running LLMs **offline** on GPUs, CPUs and unified-memory boxes.
 
-* `data/models.csv` – 170 open-weight LLMs (params, active params, layers, KV heads, head dim, context, licence, HF repo)
+* `data/models.csv` – 177 open-weight LLMs and domain models (params, active params, layers, KV heads, head dim, context, licence, HF repo)
 * `data/gpus.csv` – 101 accelerators, including 7 explicitly marked Crescent Island (CRI) pre-release planning rows
 * `data/cpus.csv` – 56 CPUs / SoCs, including 15 explicitly marked Nova Lake (NVL) pre-release planning rows
 * `data/reference_models.csv` – 75 public reference-catalog models with tier, rank, parameter scale, architecture, licence, release, model-card and GGUF links
 * `data/voice_models.csv`, `data/quant.csv` – ASR/VAD/diarization checkpoints and quantization bits-per-weight
-* `data/evidence.csv` – 2,432 checks: every published parameter with its source URL, quoted source value and status
+* `data/evidence.csv` – 2,481 checks: every published parameter with its source URL, quoted source value and status
 
 Every row carries a `Source URL` and an `Evidence status` ("7 verified / 0 corrected / 0 estimate-or-unsourced"). Sources are Hugging Face metadata/configs/model cards, Intel ARK, AMD and NVIDIA product pages, whitepapers and datasheets, Apple tech specs, llama.cpp, and the PCI-SIG / SATA-IO / USB-IF / JEDEC / OCP specifications. Nothing is copied from third-party spec aggregators.
 
