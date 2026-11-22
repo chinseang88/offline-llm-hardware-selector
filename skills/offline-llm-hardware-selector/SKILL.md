@@ -11,11 +11,13 @@ Repo layout (paths relative to the repo root; find it with `**/offline-llm-hardw
 
 | Path | Use |
 |---|---|
-| `scripts/selector.py` | Answer sizing questions (model → hardware, hardware → models) |
+| `scripts/selector.py` | Answer sizing questions (model → hardware, hardware → models); `--runtime`, `--kv-bits`, `--task` |
+| `scripts/formulas.py` | The sizing formulas (Python mirror of the web app's `docs/formulas.js`) |
+| `scripts/reverify_all.py` | One-command re-verification: data, cross-references, page wiring, themes, formulas; `--online` adds Hugging Face repos, source links and newer releases |
 | `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` and Excel-parity audit in `docs/parity.json` after CSV edits |
 | `scripts/selector_parity.py` | Quantify web/CLI vs Excel memory and throughput formulas for 8K/32K workloads |
 | `scripts/export_public_data.py`, `scripts/excel/*` | Workbook ↔ CSV round trip (only when the Excel workbook is available) |
-| `data/*.csv` | models, gpus, cpus, voice_models, quant + evidence log |
+| `data/*.csv` | models, gpus, cpus, voice_models, quant, libraries (runtime efficiency), arch_support, task_rules + evidence log |
 | `references/conventions.md` | Sizing formulas, status legend, hybrid/MLA KV conventions |
 | `references/sources.md` | Where each parameter comes from, URL patterns, known pitfalls |
 
@@ -38,13 +40,13 @@ Use the website's catalog dropdowns exactly; do not permit arbitrary CPU/GPU/mem
    ```
    Unknown model → `--list models` and pick the closest; if it is not in the table, add it (Workflow C) before answering.
 3. Report: memory breakdown (weights + KV + runtime), the accelerators/CPUs that fit, estimated tok/s vs target, and the **evidence status** shown in brackets. Quote the Source URL for the model and for any hardware you recommend. Always state that tok/s figures are bandwidth-model estimates, not benchmarks.
-4. If the user has an Excel workbook (`Offline_LLM_Hardware_Selector_v*.xlsx`), the same answers exist on sheets `1 Plan a Build` / `2 What Can My HW Run`; the CSVs mirror its `Models`, `GPUs`, `CPUs`, `Voice Models`, `Quant` sheets.
+4. If the user has an Excel workbook (`Offline_LLM_Hardware_Selector_v*.xlsx`), comparable answers exist on sheets `1 Plan a Build` / `2 What Can My HW Run`; the CSVs mirror its `Models`, `GPUs`, `CPUs`, `Voice Models`, `Quant`, `Libraries`, `Arch Support` and `Task Rules` sheets. The workbook's runtime allowance and speed denominator differ from the app and CLI (see `references/conventions.md`), so expect small differences and say which one you are quoting.
 
 ## Workflow B – verify / refresh evidence
 
 1. Run the verifier for the affected table (a name filter limits the run):
    ```
-   python scripts/verify_models.py            # all models (177 rows, HF API)
+   python scripts/verify_models.py            # all models (HF API)
    python scripts/verify_gpus.py "RTX 5090"   # one GPU
    python scripts/verify_cpus.py              # all CPUs
    python scripts/verify_misc.py              # voice models, quant table, NVMe constants
@@ -59,6 +61,15 @@ Use the website's catalog dropdowns exactly; do not permit arbitrary CPU/GPU/mem
 2. Append the row to the CSV with the column conventions in `references/conventions.md` (hybrid models → full-attention layers; MLA models → 1 KV head × 288 dim; unified-memory boxes → GPU-usable share).
 3. Run the matching verifier with the name filter; fix anything not `VERIFIED`; copy the records into `data/evidence.csv`.
 4. For GPU/CPU rows also add the URL to the `URLS` map in `verify_gpus.py` / `verify_cpus.py` so future refreshes cover it.
+5. Rebuild and re-check before committing: `python scripts/build_web_data.py`, then `python scripts/reverify_all.py` (must exit 0). A model's `Runtime arch` must have a row in `data/arch_support.csv`.
+
+## Workflow D – re-verify everything after any change
+
+```
+python scripts/reverify_all.py            # offline: data, cross-references, page wiring, themes, formulas
+python scripts/reverify_all.py --online   # plus Hugging Face repos, source links, newer releases to review
+```
+Failures must be fixed. "To review" items are judgement calls (for example recent repositories not in the catalog: most are fine-tunes or variants; add only official releases, through Workflow C). When changing a formula, change `docs/formulas.js` and `scripts/formulas.py` together. For the web app, also open the page with `?selftest=1`, which exercises every page and control in the light and dark themes.
 
 ## Guard-rails
 

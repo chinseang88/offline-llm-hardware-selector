@@ -1,14 +1,20 @@
-"""Quantify the public web/CLI calculator against the Excel workbook formulas.
+"""Quantify the web/CLI calculator against the workbook's "1 Plan a Build" formulas.
 
-Reports memory and decode deltas for representative public workloads. App memory:
-3% weight margin + 7% weight execution overhead, with 8-bit KV by default.
-Excel Plan-a-Build memory: no weight overhead + max(1, 10% of weights+KV) runtime.
-The app decode path uses active quantized weights; Excel adds the full allocated
-KV cache to the same traffic denominator. Both use runtime-specific efficiency.
+Both sides come from scripts/formulas.py, so this reports only the intended differences:
+  memory  app = 3% weight margin + 7% of weights for execution;
+          workbook = raw weights + max(1 GB, 10% of weights+KV), context capped at the model limit
+  decode  app reads the active quantized weights per token;
+          workbook adds the whole KV allocation to that denominator
+Both use the same runtime efficiency (llama.cpp row of data/libraries.csv) and 8-bit KV.
+Hardware the runtime cannot use is skipped.
 """
 import json
 import statistics
 from common import load_rows
+import formulas as F
+
+RUNTIME = "llama.cpp"
+KV_BITS = 8
 
 
 def percentile(values, pct):
@@ -34,57 +40,28 @@ def stats(values):
     }
 
 
-def kv_token(model, kv_bits=8):
-    return 2 * model["Layers"] * model["KV heads"] * model["Head dim"] * kv_bits / 8 / 1e9
-
-
 def memory(model, bits, context, users, excel=False):
-    weights = model["Total params (B)"] * bits / 8
-    kv = kv_token(model, 8) * context * users
-    if excel:
-        runtime = max(1, 0.1 * (weights + kv))
-        return weights + kv + runtime
-    return weights * 1.03 + kv + weights * 0.07
+    need = F.excel_memory_need(model, bits, context, users, KV_BITS) if excel else F.memory_need(model, bits, context, users, KV_BITS)
+    return need["total"]
 
 
-def web_efficiency(vendor, cpu=False):
-    if cpu or vendor == "Intel":
-        return 0.55
-    return 0.65 if vendor == "Apple" else 0.60
-
-
-def excel_efficiency(hardware, cpu=False):
-    if cpu:
-        name = hardware["CPU / platform"]
-        if name.startswith("Mac ") or name.startswith("Apple M4"):
-            return 0.65
-        if "Jetson" in name:
-            return 0.60
-        return 0.55
-    if hardware["Vendor"] == "Intel":
-        return 0.50
-    if hardware["Vendor"] == "Apple":
-        return 0.65
-    if hardware["Vendor"] == "NVIDIA":
-        return 0.45 if hardware["Accelerator"] == "GT 710 1GB" else 0.65
-    return 0.60
-
-
-def speed(model, hardware, bits, context, users, cpu=False, excel=False):
+def speed(model, hardware, efficiency, bits, context, users, cpu=False, excel=False):
     bandwidth = hardware["Memory BW (GB/s)" if cpu else "Bandwidth (GB/s)"]
-    active = model["Active params (B)"] * bits / 8
-    token_kv = kv_token(model, 8)
-    denominator = active + (token_kv * context * users if excel else 0)
-    return excel_efficiency(hardware, cpu) * bandwidth / denominator / users if excel else web_efficiency(hardware["Vendor"] if not cpu else "", cpu) * bandwidth / denominator / users
+    if excel:
+        return F.excel_decode_tok_per_second(model, bits, context, efficiency, bandwidth, users, 1, KV_BITS)
+    return F.decode_tok_per_second(model["Active params (B)"], bits, efficiency, bandwidth, users)
 
 
 def calculate():
     models = [m for m in load_rows("models") if all(m.get(k) is not None for k in ("Total params (B)", "Active params (B)", "Layers", "KV heads", "Head dim"))]
-    gpus = [g for g in load_rows("gpus") if g.get("Bandwidth (GB/s)") is not None]
-    cpus = [c for c in load_rows("cpus") if c.get("Memory BW (GB/s)") is not None]
+    table = F.build_efficiency_table(load_rows("libraries"))
+    gpus = [(g, F.gpu_runtime_efficiency(table, RUNTIME, g)["efficiency"]) for g in load_rows("gpus") if g.get("Bandwidth (GB/s)") is not None]
+    cpus = [(c, F.cpu_runtime_efficiency(table, RUNTIME, c)) for c in load_rows("cpus") if c.get("Memory BW (GB/s)") is not None]
+    gpus = [(g, eff) for g, eff in gpus if eff > 0]
+    cpus = [(c, eff) for c, eff in cpus if eff > 0]
     quants = {q["Quantization"]: q["Bits/weight (eff.)"] for q in load_rows("quant")}
     bits = next(value for name, value in quants.items() if "Q4_K_M" in name)
-    result = {"basis": "Q4_K_M, 8-bit KV, 1 user; positive delta means web/app estimate is higher than Excel"}
+    result = {"basis": f"Q4_K_M, {KV_BITS}-bit KV, 1 user, {RUNTIME} efficiency; positive delta means the app estimate is higher than the workbook Plan-a-Build formula"}
     for context in (8192, 32768):
         memory_deltas = []
         gpu_deltas = []
@@ -93,13 +70,13 @@ def calculate():
             web_memory = memory(model, bits, context, 1)
             excel_memory = memory(model, bits, context, 1, excel=True)
             memory_deltas.append((web_memory / excel_memory - 1) * 100)
-            for gpu in gpus:
-                web = speed(model, gpu, bits, context, 1)
-                old = speed(model, gpu, bits, context, 1, excel=True)
+            for gpu, efficiency in gpus:
+                web = speed(model, gpu, efficiency, bits, context, 1)
+                old = speed(model, gpu, efficiency, bits, context, 1, excel=True)
                 gpu_deltas.append((web / old - 1) * 100)
-            for cpu in cpus:
-                web = speed(model, cpu, bits, context, 1, cpu=True)
-                old = speed(model, cpu, bits, context, 1, cpu=True, excel=True)
+            for cpu, efficiency in cpus:
+                web = speed(model, cpu, efficiency, bits, context, 1, cpu=True)
+                old = speed(model, cpu, efficiency, bits, context, 1, cpu=True, excel=True)
                 cpu_deltas.append((web / old - 1) * 100)
         result[f"{context // 1024}k"] = {
             "memory_delta_pct": stats(memory_deltas),

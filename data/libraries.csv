@@ -1,0 +1,16 @@
+Library,NVIDIA GPU,AMD GPU,Intel GPU / iGPU,NPU (Intel/AMD),Apple Silicon,x86 CPU,ARM CPU,Jetson (ARM+GPU),Qualcomm / Rockchip NPU,Formats,Typical eff.,Users / concurrency,Offline install,License,Best for,Vulkan fallback eff.,Min CUDA compute capability
+llama.cpp,0.65,0.60 (ROCm/Vulkan),0.50 (SYCL/Vulkan),—,0.65 (Metal),0.55,0.55 (NEON/SVE),0.60 (CUDA),— (Hexagon exp.),"GGUF Q2–Q8, FP16",0.6,1–4,Easy – single binary,MIT,"Default for offline, widest HW incl. ARM",0.45,5
+Ollama,0.62,0.58 (ROCm),0.45 (Vulkan),—,0.62 (Metal),0.52,0.52,0.58,—,GGUF,0.58,1–4,Easy – installer + model blobs,MIT,"llama.cpp wrapper, simplest UX + REST API",0.4,5
+LM Studio,0.62,0.58 (Vulkan),0.45 (Vulkan),—,0.65 (MLX),0.52,0.52 (Win ARM),—,—,"GGUF, MLX",0.58,1,Easy – GUI,Proprietary (free),"Desktop GUI, Windows/macOS/Linux",0.45,5
+vLLM,0.75,0.70 (ROCm),0.55 (XPU),—,—,0.40,0.35,0.60,—,"FP16, FP8, AWQ, GPTQ",0.7,10–1000+,Medium – pip wheels mirror,Apache-2.0,"Multi-user server, paged KV, TP/PP",—,7
+SGLang,0.75,0.70 (ROCm),—,—,—,—,—,—,—,"FP16, FP8, AWQ, GPTQ",0.7,10–1000+,Medium,Apache-2.0,"High-throughput server, RadixAttention",—,7.5
+TensorRT-LLM,0.80,—,—,—,—,—,—,0.70,—,"FP16, FP8, INT4-AWQ, FP4",0.75,10–1000+,Hard – engine build per GPU,Apache-2.0,Max NVIDIA perf; Triton serving,—,7.5
+ExLlamaV2 / V3,0.75,0.65 (ROCm),—,—,—,—,—,—,—,EXL2/EXL3 2–8 bit,0.72,1–8,Medium,MIT,Fastest single-user on consumer NVIDIA,—,6
+MLX / mlx-lm,—,—,—,—,0.70,—,—,—,—,"MLX 3–8 bit, FP16",0.68,1–4,Easy – pip,MIT,Best on Apple Silicon,—,-
+OpenVINO GenAI,—,—,0.60 (Arc / iGPU),0.45 (NPU),—,0.55,0.40,—,—,INT4/INT8 IR,0.55,1–16,Medium – offline pip,Apache-2.0,Intel CPU/iGPU/NPU; low-power x86 pick,—,-
+IPEX-LLM,—,—,0.58 (Arc / iGPU),0.40 (NPU),—,0.50,—,—,—,"INT4/FP8, GGUF",0.52,1–8,Medium,Apache-2.0,Intel XPU acceleration for llama.cpp/Ollama/vLLM,—,-
+ONNX Runtime GenAI,0.60 (CUDA/DML),0.50 (DML),0.50 (DML),0.40 (QNN / VitisAI),—,0.45,0.45,—,0.40 (QNN),ONNX INT4,0.5,1–4,Medium,MIT,"Windows / Copilot+ PC, DirectML",—,6
+MLC-LLM,0.60,0.55 (Vulkan),0.50 (Vulkan),—,0.60 (Metal),—,0.45 (Android),0.55,—,MLC q4f16,0.55,1–4,Medium – compile per target,Apache-2.0,Phones / WebGPU / cross-platform,0.45,6
+Qualcomm Genie (QNN),—,—,—,—,—,—,—,—,0.45 (Hexagon),QNN INT4/INT8,0.45,1,Hard – AI Hub export,Proprietary,"Snapdragon NPU, very low W",—,-
+RKLLM (Rockchip),—,—,—,—,—,—,—,—,0.40 (RK3588 NPU),"W8A8, W4A16",0.4,1,Medium,Proprietary,"RK3588 NPU, ~10 W boards",—,-
+AMD Lemonade / Ryzen AI SW,—,0.55 (iGPU),—,0.45 (XDNA NPU),—,0.50,—,—,—,"ONNX/OGA INT4, GGUF",0.5,1–4,Medium,Apache-2.0,Ryzen AI hybrid NPU+iGPU,—,-

@@ -1,0 +1,57 @@
+Arch key,llama.cpp,Ollama,LM Studio,vLLM,SGLang,TensorRT-LLM,ExLlamaV2 / V3,MLX / mlx-lm,OpenVINO GenAI,IPEX-LLM,ONNX Runtime GenAI,MLC-LLM,Qualcomm Genie (QNN),RKLLM (Rockchip),AMD Lemonade / Ryzen AI SW,Models (examples),Notes
+llama,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,"Llama 2/3.x, Nemotron-Llama, Yi, Falcon3, SmolLM2, TinyLlama",Reference architecture – supported everywhere
+mistral,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,P,P,Y,"Mistral 7B, Nemo, Small 24B, Codestral, Devstral, Magistral, Large 2",Llama-like; NPU runtimes only for small sizes
+qwen2,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,"Qwen2.5, QwQ, R1-Distill-Qwen, MiMo",Widely supported incl. RKLLM/Genie
+qwen2-vl,Y,Y,Y,Y,Y,P,P,Y,Y,P,P,N,N,P,P,Qwen2.5-VL,llama.cpp via mtmd (mmproj file); vision encoder must ship with model
+qwen3,Y,Y,Y,Y,Y,Y,P,Y,Y,Y,P,P,P,Y,Y,"Qwen3 dense, R1-0528-Qwen3",Needs 2025+ runtime builds
+qwen3moe,Y,Y,Y,Y,Y,Y,P,Y,P,P,N,N,N,N,Y,Qwen3 30B-A3B / 235B / Coder MoE,MoE; NPU runtimes not supported
+qwen3next,P,P,P,Y,Y,P,N,Y,N,N,N,N,N,N,P,Qwen3-Next (hybrid linear attention),Hybrid attention – llama.cpp support is recent / partial
+qwen3-vl,P,P,P,Y,Y,P,N,P,P,N,N,N,N,N,P,Qwen3-VL,New VLM arch – check runtime release notes
+new-2026,P,P,P,P,P,N,N,P,N,N,N,N,N,N,P,"2026 releases (Qwen3.5/3.6/3.8, DeepSeek V4, Kimi K3, GLM-5.3, Mistral Large 3/4, Muse, Gemma 4, Laguna, LFM2.5)",New arch – confirm support in the exact runtime version before buying HW
+deepseek2,Y,Y,Y,Y,Y,Y,N,Y,P,P,N,N,N,N,P,"DeepSeek V2/V2.5/V3/R1/V3.1, Kimi K2 (MLA MoE)",MLA KV cache; vLLM/SGLang best for multi-user
+deepseek3.2,N,N,N,Y,Y,P,N,P,N,N,N,N,N,N,N,DeepSeek V3.2 (sparse attention),Sparse attention kernels – server runtimes only
+gemma,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Gemma 1 / CodeGemma,
+gemma2,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Gemma 2,Soft-capping handled in current builds
+gemma3,Y,Y,Y,Y,Y,P,P,Y,Y,P,P,P,P,P,Y,"Gemma 3 (1B text, 4B+ VLM)",Vision via mmproj in llama.cpp
+gemma3n,Y,Y,Y,P,N,N,N,Y,P,N,P,N,N,N,P,"Gemma 3n (PLE, on-device)",llama.cpp/Ollama text+image; audio limited
+phi3,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Y,Phi-3 / 3.5 / 4 / 4-mini,
+phimoe,Y,P,Y,Y,P,P,N,P,N,N,P,N,N,N,P,Phi-3.5 MoE,
+phi4mm,N,N,N,Y,N,N,N,P,P,N,Y,N,N,N,N,Phi-4-multimodal,Best via ONNX Runtime GenAI or vLLM
+gpt-oss,Y,Y,Y,Y,Y,Y,N,Y,P,P,Y,N,N,N,Y,gpt-oss (MXFP4 MoE),Native MXFP4; FP4 kernels best on Blackwell/Hopper
+mixtral,Y,Y,Y,Y,Y,Y,Y,Y,P,P,N,Y,N,N,P,Mixtral 8x7B / 8x22B,
+llama4,Y,Y,Y,Y,Y,Y,N,Y,N,N,N,N,N,N,P,Llama 4 Scout / Maverick,Vision in vLLM/SGLang; llama.cpp text
+mllama,N,Y,N,Y,Y,Y,N,Y,Y,P,N,N,N,N,N,Llama 3.2 Vision (cross-attn),NOT in llama.cpp/LM Studio – Ollama has its own engine
+pixtral,Y,P,Y,Y,P,N,P,Y,P,N,N,N,N,N,P,Pixtral,
+mistral3-vl,Y,Y,Y,Y,P,P,P,Y,P,N,N,N,N,N,P,Mistral Small 3.1/3.2 (VLM),Vision via mmproj in llama.cpp
+cohere,Y,Y,Y,Y,Y,P,Y,Y,P,P,N,N,N,N,P,Command R / R+ / Aya Expanse,
+cohere2,Y,Y,Y,Y,P,N,P,Y,N,N,N,N,N,N,P,Command A / R7B,
+glm4,Y,Y,Y,Y,Y,P,N,Y,Y,Y,N,P,N,P,P,GLM-4 9B,
+glm4moe,Y,Y,Y,Y,Y,P,P,Y,N,N,N,N,N,N,P,GLM-4.5 / 4.5-Air / 4.6,
+minimax-m1,N,N,N,Y,P,N,N,P,N,N,N,N,N,N,N,MiniMax-M1 (lightning attention),Linear attention – vLLM only in practice
+minimax-m2,Y,P,Y,Y,Y,N,N,Y,N,N,N,N,N,N,P,MiniMax-M2,
+nemotron-nas,Y,P,Y,Y,P,Y,N,P,N,N,N,N,N,N,P,Nemotron Super 49B / Ultra 253B (NAS),Variable layer shapes (DeciLM)
+hybrid-mamba,Y,P,Y,Y,P,P,N,Y,N,N,N,N,N,N,P,"Nemotron-H / Nano 9B v2, Falcon-H1, Granite 4.0-H",Mamba-2 hybrid – needs recent builds; KV only on attention layers
+jamba,P,N,P,Y,N,N,N,P,N,N,N,N,N,N,N,AI21 Jamba,Mamba hybrid MoE – vLLM recommended
+granite,Y,Y,Y,Y,Y,Y,P,Y,Y,Y,P,P,N,N,Y,IBM Granite 3.x,
+internlm2,Y,Y,Y,Y,P,P,N,P,Y,P,N,P,N,N,P,InternLM 2.5,
+exaone,Y,Y,Y,Y,P,N,N,Y,P,N,N,N,N,N,P,EXAONE 3.5,
+exaone4,Y,P,Y,Y,P,N,N,P,N,N,N,N,N,N,P,EXAONE 4.0,
+olmo2,Y,Y,Y,Y,P,N,N,Y,P,N,N,N,N,N,P,OLMo 2,
+starcoder2,Y,Y,Y,Y,P,Y,N,Y,Y,P,N,N,N,N,P,StarCoder2,
+hunyuan-moe,Y,P,P,Y,Y,Y,N,P,N,N,N,N,N,N,P,Hunyuan-A13B,
+ernie4.5,Y,P,Y,Y,P,N,N,Y,N,N,N,N,N,N,P,ERNIE 4.5,
+smollm3,Y,Y,Y,Y,P,P,N,Y,P,N,N,P,N,P,Y,SmolLM3,
+seed-oss,Y,P,Y,Y,P,N,N,P,N,N,N,N,N,N,P,ByteDance Seed-OSS,
+minicpmv,Y,Y,Y,Y,P,N,N,P,P,N,N,N,N,N,N,MiniCPM-V,
+qwen3_moe,Y,Y,Y,Y,Y,Y,P,Y,P,P,N,N,N,N,Y,Qwen3 30B-A3B / 235B Instruct 2507,Alias of qwen3moe; MoE supported in major GPU/CPU runtimes
+qwen3_5,Y,Y,Y,Y,Y,P,N,Y,P,P,N,N,N,N,P,"Qwen3.5 (0.8B–35B-A3B), MiniCPM-V 4.7",Hybrid Gated-DeltaNet + full attention; needs 2026 runtime builds
+qwen,Y,Y,Y,Y,Y,P,N,Y,P,P,N,N,N,N,P,MiMo-V2.6-Distill-Qwen-9B,Qwen3.5-based hybrid VLM distill; check 2026 runtime support
+gemma4,Y,Y,Y,Y,Y,P,N,Y,P,P,P,P,N,N,P,"Gemma 4 (E2B, E4B, 12B, 26B-A4B, 31B)",2026 multimodal/PLE arch; vision via mmproj in llama.cpp
+qwen4_exp,P,P,P,P,P,N,N,P,N,N,N,N,N,N,P,Qwen3.8 Flash-Next 180B-A6B,Qwen 4-architecture preview; verify exact runtime release notes
+deepseek_v41,P,P,P,Y,Y,P,N,P,N,N,N,N,N,N,N,DeepSeek-V4.1-Flash (CSA2 + Engram),Sparse CSA2 attention + Engram; vLLM/SGLang primary
+mistral4,P,P,P,Y,Y,P,N,P,N,N,N,N,N,N,P,Mistral Small 4 119B-A6.5B (MLA MoE),MLA MoE VLM; vLLM/SGLang recommended
+lfm2,Y,Y,Y,Y,P,N,N,Y,P,N,P,N,N,N,P,"LFM2.5 (2.6B, VL-3B, 24B-A2B)",Hybrid conv + attention; supported in 2026 llama.cpp/vLLM/MLX
+lfm3,P,P,P,P,P,N,N,P,N,N,N,N,N,N,P,"LFM3 (1.7B, VL-2B)",2026 hybrid arch; verify runtime build
+flint,P,P,P,P,P,N,N,P,N,N,N,N,N,N,P,Flint 40B MoE (coding),2026 MoE arch; verify runtime build
+bonsai2,P,P,P,N,N,N,N,P,N,N,N,N,N,N,N,"Bonsai 2 (9B, 27B ternary GGUF)",Ternary GGUF; requires recent/custom llama.cpp build
+unknown,P,P,P,P,P,N,N,P,N,N,N,N,N,N,P,Not mapped (e.g. newly synced model),Verify manually

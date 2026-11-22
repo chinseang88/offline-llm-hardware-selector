@@ -1,17 +1,45 @@
 # Conventions: sizing formulas, status legend, column rules
 
-## Sizing formulas (identical to the workbook and `scripts/selector.py`)
+## Sizing formulas
+
+One implementation, two mirrors: `docs/formulas.js` (web app) and `scripts/formulas.py` (CLI, checks). `scripts/reverify_all.py` fails if they disagree. Three profiles are kept apart on purpose.
+
+### App and CLI (`selector.py`, Model → Hardware, Hardware → Models)
 
 | Quantity | Formula |
 |---|---|
 | Weights (GB) | `total_params_B × bits_per_weight / 8 × 1.03` (3 % tensor/metadata overhead) |
-| KV cache per token (GB) | `2 × layers × kv_heads × head_dim × 2 bytes / 1e9` (FP16 K and V) |
-| Memory needed (GB) | `weights + kv_per_token × context × users + 1.5` (runtime/activations) |
-| GPU usable memory | `memory_GB × 0.92` |
-| CPU usable RAM | `max_RAM − min(8, 0.25 × max_RAM)` |
-| Decode tok/s per user | `eff × bandwidth_GBps × min(cards,8) × (0.8 if cards>1) / (active_params_B × bits/8 + kv_per_token) / users` |
-| Efficiency `eff` | Intel GPU 0.55 · Apple 0.65 · other GPUs 0.60 · any CPU 0.55 |
-| Largest Q4 model on a card (B params) | `(usable − 3) / 0.667` |
+| KV cache (GB) | `2 × layers × kv_heads × head_dim × kv_bits / 8 / 1e9 × context × users` (KV bits 4, 8 or 16; default 8) |
+| Runtime (GB) | `0.07 × weights` |
+| Memory needed (GB) | `weights + KV cache + runtime` |
+| GPU usable memory | `memory_GB × 0.92 × cards` (headroom adjustable on the hardware page) |
+| CPU usable RAM | `RAM − min(8, 0.25 × RAM)` |
+| CPU offload pool | `max(0, min(installed RAM, platform max RAM) − 8)`; only llama.cpp, Ollama, LM Studio and IPEX-LLM; never on unified-memory systems |
+| Decode tok/s per user | `eff × bandwidth_GBps × (1 + 0.8 × (cards − 1)) / (active_params_B × bits / 8) / users` |
+| Decode with offload | `1 / (bytes_per_token × (gpu_share / gpu_rate + cpu_share / cpu_rate)) / users`, `gpu_share = gpu_usable / memory_needed`, `rate = eff × bandwidth` |
+| Efficiency `eff` | `data/libraries.csv` cell for the runtime and the hardware's `Runtime HW class` (leading number). NVIDIA below the runtime's minimum CUDA compute capability, or AMD without ROCm, falls back to `Vulkan fallback eff.`; a dash means the runtime does not run there |
+| Task floor | `data/task_rules.csv`: minimum bits by size band (<4B, 4–30B, ≥30B); a vision task also needs a VLM. A model below the floor is not counted as fitting |
+| Runtime can load model | `data/arch_support.csv` cell for the model's `Runtime arch`: `N` blocks, `P` warns |
+
+### Workbook "1 Plan a Build" / "2 What Can My HW Run" (shown on the site as the Excel comparison)
+
+| Quantity | Formula |
+|---|---|
+| Memory needed (GB) | `total × bits / 8 + KV + max(1, 0.1 × (weights + KV))`, context capped at the model's max context |
+| Decode tok/s per user | `eff × bandwidth × min(cards, 8) × (0.8 if cards > 1) / (active × bits / 8 + KV cache) / users` |
+
+The app is lower on memory for small models (no 1 GB runtime floor) and higher on speed (the workbook adds the whole KV allocation to the bytes read per token). `scripts/selector_parity.py` reports the size of both differences.
+
+### Workbook "Multi-Stage Pipeline Fit" (Pipeline page)
+
+| Quantity | Formula |
+|---|---|
+| Usable memory | `memory_GB × cards × (1 − headroom)` |
+| Effective bandwidth | `bandwidth × (1 + 0.8 × (cards − 1)) × utilization` (utilization = runtime efficiency unless set by hand) |
+| Voice reserve | per GPU stage: resident weights (`params × bits / 8`, or a measured value) + 5 GB activation reserve; 5 GB/s bandwidth. The 5 / 5 figures are planning assumptions. A stage without published weights counts as 0 GB and is flagged `WEIGHTS PENDING` |
+| LLM slot memory | `total × bits / 8 × 1.03 + KV cache (1 user, KV bits selectable, FP16 in the workbook) + 0.07 × weights` |
+| LLM slot bandwidth | `active × bits / 8 × 1.03 × target tok/s` |
+| Fit | slots are added in order on top of the voice reserve: `NO - GPU MEMORY` when the running memory passes usable, else `NO - BANDWIDTH` when running bandwidth passes effective (sum of slots when all answer at once, the largest slot when one at a time) |
 
 These are planning estimates (memory-bandwidth bound decode, no prefill, no speculative decoding). Always say so.
 

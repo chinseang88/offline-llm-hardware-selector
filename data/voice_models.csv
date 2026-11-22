@@ -10,4 +10,5 @@ ASR,Whisper base,0.07259392,32,https://huggingface.co/openai/whisper-base,Apache
 ASR,Whisper small,0.241734912,32,https://huggingface.co/openai/whisper-small,Apache-2.0,Checkpoint F32; weights may differ with selected precision or runtime.
 ASR,Whisper large-v3,1.54349056,16,https://huggingface.co/openai/whisper-large-v3,Apache-2.0,Checkpoint F16; Intel GPU runtime and memory unverified.
 ASR,Distil-Whisper large-v3,0.75640576,16,https://huggingface.co/distil-whisper/distil-large-v3,MIT,Checkpoint F16; English ASR; Intel GPU runtime and memory unverified.
+ASR,Whisper large-v3-turbo,0.80887808,16,https://huggingface.co/openai/whisper-large-v3-turbo,MIT,Checkpoint F16 (~1.62 GB); pruned 4-decoder-layer fast multilingual ASR. Intel GPU runtime and memory unverified.
 ASR,Custom ASR,,,,User-supplied,Supply weight and performance measurements.

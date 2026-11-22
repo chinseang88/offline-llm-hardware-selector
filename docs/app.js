@@ -38,6 +38,11 @@ const state = {
   hardwareMemoryHeadroom: 8,
   hardwareBandwidthUtil: 100,
   evidenceStatus: "all",
+  evidenceSheet: "all",
+  evidenceLimit: 300,
+  databaseLimit: 500,
+  modelQuery: "",
+  hardwareModelQuery: "",
   runtime: "llama.cpp",
   task: "General chat / Q&A",
   kvBits: 8,
@@ -97,82 +102,108 @@ function evidenceShort(text) {
   return "Review source";
 }
 
+// All sizing maths lives in formulas.js (window.ModelFit); these wrappers only supply the page state.
+const MF = window.ModelFit;
+const DATABASE_PAGE = 500;
+const EVIDENCE_PAGE = 300;
+let efficiencyTable = {};
+let taskRules = MF.buildTaskRules([]);
+
 function kvPerTokenGb(model, bits = state.kvBits) {
-  return 2 * Number(model.Layers) * Number(model["KV heads"]) * Number(model["Head dim"]) * bits / 8 / 1e9;
+  return MF.kvPerTokenGb(model, bits);
 }
 
 function memoryNeed(model) {
-  const weights = Number(model["Total params (B)"]) * state.bits / 8 * 1.03;
-  const kv = kvPerTokenGb(model, state.kvBits) * state.context * state.users;
-  const overhead = weights * 0.07;
-  return { weights, kv, runtime: overhead, total: weights + kv + overhead };
+  return MF.memoryNeed(model, { bits: state.bits, kvBits: state.kvBits, context: state.context, users: state.users });
 }
 
-function excelMemoryNeed(model, bits = state.bits, context = state.context, users = state.users) {
-  const weights = Number(model["Total params (B)"]) * bits / 8;
-  const kv = kvPerTokenGb(model) * context * users;
-  const runtime = Math.max(1, 0.1 * (weights + kv));
-  return { weights, kv, runtime, total: weights + kv + runtime };
+function excelMemoryNeed(model, bits = state.bits, context = state.context, users = state.users, kvBits = state.kvBits) {
+  return MF.excelMemoryNeed(model, { bits, context, users, kvBits });
 }
 
-const runtimeEfficiency = {
-  "llama.cpp": { NVIDIA: 0.65, AMD: 0.60, Intel: 0.50, Apple: 0.65, CPU: 0.55, Jetson: 0.60 },
-  "Ollama": { NVIDIA: 0.62, AMD: 0.58, Intel: 0.45, Apple: 0.62, CPU: 0.52, Jetson: 0.58 },
-  "LM Studio": { NVIDIA: 0.62, AMD: 0.58, Intel: 0.45, Apple: 0.65, CPU: 0.52, Jetson: 0 },
-  "vLLM": { NVIDIA: 0.75, AMD: 0.70, Intel: 0.55, Apple: 0, CPU: 0.40, Jetson: 0.60 },
-  "SGLang": { NVIDIA: 0.75, AMD: 0.70, Intel: 0, Apple: 0, CPU: 0, Jetson: 0 },
-  "TensorRT-LLM": { NVIDIA: 0.80, AMD: 0, Intel: 0, Apple: 0, CPU: 0, Jetson: 0.70 },
-  "ExLlamaV2 / V3": { NVIDIA: 0.75, AMD: 0.65, Intel: 0, Apple: 0, CPU: 0, Jetson: 0 },
-  "MLX / mlx-lm": { NVIDIA: 0, AMD: 0, Intel: 0, Apple: 0.70, CPU: 0, Jetson: 0 },
-  "OpenVINO GenAI": { NVIDIA: 0, AMD: 0, Intel: 0.60, Apple: 0, CPU: 0.55, Jetson: 0 },
-  "IPEX-LLM": { NVIDIA: 0, AMD: 0, Intel: 0.58, Apple: 0, CPU: 0.50, Jetson: 0 },
-};
-
-function efficiency(vendor, cpu = false, hardware = null) {
-  const profile = runtimeEfficiency[state.runtime] || runtimeEfficiency["llama.cpp"];
-  if (cpu) {
-    if (hardware && /Jetson/.test(hardware["CPU / platform"] || "")) return profile.Jetson;
-    return profile.CPU;
-  }
-  return profile[vendor] ?? 0;
+function gpuEfficiency(gpu, runtime = state.runtime) {
+  return MF.gpuRuntimeEfficiency(efficiencyTable, runtime, gpu);
 }
 
-const taskRules = {
-  "General chat / Q&A": { base: 4.85, small: 4.85, large: 4.85, note: "Q4_K_M is the baseline for chat." },
-  "RAG / document Q&A": { base: 5.7, small: 8.5, large: 4.85, note: "RAG needs enough precision to preserve grounded facts." },
-  "Coding": { base: 5.7, small: 8.5, large: 4.85, note: "Small coders need Q8; >=30B can use Q4." },
-  "Maths / reasoning": { base: 5.7, small: 8.5, large: 4.85, note: "Reasoning amplifies small arithmetic and token errors." },
-  "Agents / tool calling": { base: 5.7, small: 8.5, large: 4.85, note: "Tool calls require exact JSON and argument spelling." },
-  "Vision (image + text)": { base: 4.85, small: 6.6, large: 4.85, note: "Vision requires a VLM and a separately loaded vision encoder." },
-  "Classification / extraction": { base: 4.85, small: 4.85, large: 4.85, note: "Short constrained outputs tolerate quantization well." },
-  "Translation / multilingual": { base: 5.7, small: 8.5, large: 4.85, note: "Low-resource languages degrade first at lower bits." },
-};
+function efficiency(hardware, cpu = false, runtime = state.runtime) {
+  return cpu ? MF.cpuRuntimeEfficiency(efficiencyTable, runtime, hardware) : gpuEfficiency(hardware, runtime).efficiency;
+}
+
+function runtimeNames() {
+  const names = (state.data?.libraries || []).map((row) => row.Library).filter(Boolean);
+  return names.length ? names : ["llama.cpp"];
+}
 
 function requiredBits(model, task = state.task) {
-  const rule = taskRules[task] || taskRules["General chat / Q&A"];
-  const total = Number(model["Total params (B)"]);
-  return total < 4 ? rule.small : total >= 30 ? rule.large : rule.base;
+  return MF.requiredBits(model, MF.taskRule(taskRules, task));
+}
+
+function archSupport(model, runtime = state.runtime) {
+  const row = (state.data.archSupport || []).find((item) => item["Arch key"] === model["Runtime arch"]);
+  return row ? String(row[runtime] ?? "") : "";
+}
+
+// Returns the first reason a model cannot run, or an empty string when it can.
+function fitBlocker(model, { bits, task, runtime, supported, memoryOk }) {
+  if (!supported) return `${runtime} not supported`;
+  if (archSupport(model, runtime) === "N") return "Runtime cannot load model";
+  const rule = MF.taskRule(taskRules, task);
+  if (rule.vlm && !MF.isVlm(model)) return "Needs a vision model";
+  if (bits < MF.requiredBits(model, rule)) return "Below task quant floor";
+  return memoryOk ? "" : "Memory shortfall";
 }
 
 function tokPerSecond(hardware, model, cpu = false) {
-  const bandwidth = Number(cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"]);
-  const perTokenWork = Number(model["Active params (B)"]) * state.bits / 8;
-  const runtimeEff = efficiency(cpu ? "" : hardware.Vendor, cpu, hardware);
-  if (!runtimeEff) return 0;
-  const quantityScale = cpu ? 1 : 1 + 0.8 * (state.gpuQuantity - 1);
-  return runtimeEff * bandwidth * quantityScale / perTokenWork / state.users;
+  return MF.decodeTokPerSecond({
+    activeParamsB: model["Active params (B)"], bits: state.bits, users: state.users,
+    efficiency: efficiency(hardware, cpu),
+    bandwidth: cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"],
+    quantity: cpu ? 1 : state.gpuQuantity,
+  });
+}
+
+function splitSpeed(model, bits, users, need, gpuPool, gpuRate, cpu, runtime) {
+  return MF.splitDecodeTokPerSecond({
+    perTokenGb: Number(model["Active params (B)"]) * bits / 8,
+    gpuShare: need > 0 ? gpuPool / need : 1,
+    gpuRate,
+    cpuRate: cpu ? efficiency(cpu, true, runtime) * Number(cpu["Memory BW (GB/s)"]) : 0,
+    users,
+  });
 }
 
 function gpuUsable(hardware) {
   const isPreferred = state.preferredGpu && hardware.Accelerator === state.preferredGpu.Accelerator;
   const memory = isPreferred && state.deviceVram > 0 ? state.deviceVram : Number(hardware["Memory (GB)"]);
-  return memory * 0.92 * state.gpuQuantity;
+  return MF.gpuUsableGb(memory, state.gpuQuantity);
 }
 
 function cpuUsable(hardware) {
   const isHost = state.hostCpu && hardware["CPU / platform"] === state.hostCpu["CPU / platform"];
   const memory = isHost && state.hostRam > 0 ? state.hostRam : Number(hardware["Max RAM (GB)"]);
-  return memory - Math.min(8, memory * 0.25);
+  return MF.cpuUsableGb(memory);
+}
+
+// Host RAM that overflow layers may use: installed RAM (capped at the platform limit) minus 8 GB for the OS.
+function offloadPoolGb(gpu, cpu, ram, enabled, runtime) {
+  if (enabled !== "Y" || !cpu || !MF.offloadSupported(runtime) || MF.isUnifiedMemory(gpu)) return 0;
+  return MF.hostOffloadGb(ram > 0 ? ram : cpu["Max RAM (GB)"], cpu["Max RAM (GB)"]);
+}
+
+function renderWarnings(id, messages) {
+  const host = byId(id);
+  host.hidden = !messages.length;
+  host.innerHTML = messages.map((message) => `<p class="${message.blocker ? "blocker" : ""}">${escapeHtml(message.text)}</p>`).join("");
+}
+
+function platformWarnings({ gpu, cpu, ram, quantity, offload, runtime }) {
+  const messages = [];
+  if (offload === "Y" && !MF.offloadSupported(runtime)) messages.push({ text: `${runtime} cannot split a model between GPU and CPU, so CPU offload is ignored. llama.cpp, Ollama, LM Studio and IPEX-LLM can.` });
+  if (offload === "Y" && !cpu) messages.push({ text: "CPU offload needs a host CPU. Select one to size the overflow pool." });
+  if (offload === "Y" && gpu && MF.isUnifiedMemory(gpu)) messages.push({ text: `${gpuDisplayName(gpu.Accelerator)} shares one memory pool between CPU and GPU, so there is nothing to offload to.` });
+  if (cpu && ram > Number(cpu["Max RAM (GB)"])) messages.push({ text: `${ram} GB installed RAM is above the ${cpu["Max RAM (GB)"]} GB limit of ${cpu["CPU / platform"]}. Offload is capped at the platform limit.` });
+  if (cpu && !(gpu && MF.isUnifiedMemory(gpu)) && Number(cpu["CPU PCIe lanes"]) < 8 * quantity) messages.push({ text: `${cpu["CPU / platform"]} has ${cpu["CPU PCIe lanes"]} CPU PCIe lanes, fewer than x8 for each of ${quantity} GPU${quantity > 1 ? "s" : ""}.` });
+  return messages;
 }
 
 function isIntelHardware(row, kind = "gpu") {
@@ -282,6 +313,7 @@ function selectGlobalGpu(gpu, { renderHardware = true } = {}) {
   if (!gpu) {
     state.preferredGpu = null;
     byId("preferred-gpu-select").value = "";
+    byId("device-vram-input").value = "0";
     state.deviceVram = 0;
     return;
   }
@@ -298,12 +330,22 @@ function selectGlobalGpu(gpu, { renderHardware = true } = {}) {
 
 function selectGlobalCpu(cpu, { renderHardware = true } = {}) {
   state.hostCpu = cpu || null;
-  state.hardwareCpu = cpu || null;
   byId("host-cpu-select").value = cpu ? cpu["CPU / platform"] : "";
-  byId("hardware-cpu-select").value = cpu ? cpu["CPU / platform"] : "";
+  // "Auto / none" only clears the model page's host; the hardware page always keeps a CPU selected.
   if (cpu) {
+    state.hardwareCpu = cpu;
+    byId("hardware-cpu-select").value = cpu["CPU / platform"];
     syncHostCpuMemory(cpu);
     syncHardwareCpuMemory(cpu);
+  } else {
+    state.hostRam = 0;
+    byId("host-ram-input").value = "0";
+    if (state.hardwareCpu && byId("hardware-cpu-select").value !== state.hardwareCpu["CPU / platform"]) {
+      const options = [...byId("hardware-cpu-select").options].map((option) => option.value);
+      if (!options.includes(state.hardwareCpu["CPU / platform"])) state.hardwareCpu = state.data.cpus.find((row) => row["CPU / platform"] === options[0]) || state.hardwareCpu;
+      byId("hardware-cpu-select").value = state.hardwareCpu["CPU / platform"];
+      syncHardwareCpuMemory(state.hardwareCpu);
+    }
   }
   if (renderHardware) renderHardwareView();
 }
@@ -332,34 +374,39 @@ function modelMatchesFilters(row, prefix = "model") {
   return (vendor === "all" || row.Vendor === vendor) && (type === "all" || row.Type === type);
 }
 
-function hostOffloadGb() {
-  if (state.offload !== "Y" || !state.hostCpu) return 0;
-  const raw = state.hostRam > 0 ? state.hostRam : Number(state.hostCpu["Max RAM (GB)"]);
-  return Math.max(0, raw - Math.max(8, raw * 0.1));
+function hostOffloadGb(gpu = null) {
+  return offloadPoolGb(gpu, state.hostCpu, state.hostRam, state.offload, state.runtime);
 }
 
 function hardwareRows() {
   const need = memoryNeed(state.model).total;
+  const blockerFor = (supported, memoryOk) => fitBlocker(state.model, { bits: state.bits, task: state.task, runtime: state.runtime, supported, memoryOk });
   if (state.view === "cpus") {
     return state.data.cpus
       .filter((row) => cleanNumber(row["Max RAM (GB)"]) && cleanNumber(row["Memory BW (GB/s)"]))
       .filter((row) => !state.intelOnly || isIntelHardware(row, "cpu"))
       .filter((row) => state.pcieWidth === "Auto" || Number(row["CPU PCIe lanes"]) >= Number((state.pcieWidth.match(/\d+/) || [0])[0]) * state.gpuQuantity)
-      .map((row) => ({
-        raw: row,
-        name: row["CPU / platform"],
-        vendor: row.Class,
-        subtitle: `${cpuGeneration(row["CPU / platform"]) || row.Class} · ${row.Cores} cores · ${row.Memory}`,
-        memory: cpuUsable(row),
-        physicalMemory: Number(row["Max RAM (GB)"]),
-        bandwidth: Number(row["Memory BW (GB/s)"]),
-        power: row["Max turbo / max power (W)"],
-        speed: tokPerSecond(row, state.model, true),
-        fits: cpuUsable(row) >= need && efficiency("", true, row) > 0 && state.bits >= requiredBits(state.model) && (state.task !== "Vision (image + text)" || /VLM|Vision/i.test(state.model.Type || "")),
-        evidence: row["Evidence status"],
-        source: row["Source URL"],
-        kind: "cpu",
-      }));
+      .map((row) => {
+        const memory = cpuUsable(row);
+        const blocker = blockerFor(efficiency(row, true) > 0, memory >= need);
+        return {
+          raw: row,
+          name: row["CPU / platform"],
+          vendor: row.Class,
+          subtitle: `${cpuGeneration(row["CPU / platform"]) || row.Class} · ${row.Cores} cores · ${row.Memory}`,
+          memory,
+          physicalMemory: Number(row["Max RAM (GB)"]),
+          bandwidth: Number(row["Memory BW (GB/s)"]),
+          power: row["Max turbo / max power (W)"],
+          speed: tokPerSecond(row, state.model, true),
+          fits: !blocker,
+          blocker,
+          gpuShare: null,
+          evidence: row["Evidence status"],
+          source: row["Source URL"],
+          kind: "cpu",
+        };
+      });
   }
   return state.data.gpus
     .filter((row) => cleanNumber(row["Memory (GB)"]) && cleanNumber(row["Bandwidth (GB/s)"]))
@@ -369,22 +416,32 @@ function hardwareRows() {
     .filter((row) => !state.minMemory || Number(row["Memory (GB)"]) >= state.minMemory)
     .filter((row) => !state.maxPower || Number(row["TDP / board power (W)"]) <= state.maxPower)
     .filter((row) => state.legacy || String(row["Used / legacy?"]).toLowerCase() !== "yes")
-    .map((row) => ({
-      raw: row,
-      name: gpuDisplayName(row.Accelerator),
-      value: row.Accelerator,
-      vendor: row.Vendor,
-      subtitle: `${row.Architecture} · ${row.Interface} · ${state.runtime}`,
-      memory: gpuUsable(row) + hostOffloadGb(),
-      physicalMemory: Number(row["Memory (GB)"]),
-      bandwidth: Number(row["Bandwidth (GB/s)"]),
-      power: row["TDP / board power (W)"],
-      speed: tokPerSecond(row, state.model, false),
-      fits: gpuUsable(row) + hostOffloadGb() >= need && efficiency(row.Vendor, false, row) > 0 && state.bits >= requiredBits(state.model) && (state.task !== "Vision (image + text)" || /VLM|Vision/i.test(state.model.Type || "")),
-      evidence: row["Evidence status"],
-      source: row["Source URL"],
-      kind: "gpu",
-    }));
+    .map((row) => {
+      const backend = gpuEfficiency(row);
+      const gpuPool = gpuUsable(row);
+      const hostPool = hostOffloadGb(row);
+      const offloaded = hostPool > 0 && need > gpuPool;
+      const blocker = blockerFor(backend.efficiency > 0, gpuPool + hostPool >= need);
+      const gpuRate = backend.efficiency * Number(row["Bandwidth (GB/s)"]) * MF.quantityScale(state.gpuQuantity);
+      return {
+        raw: row,
+        name: gpuDisplayName(row.Accelerator),
+        value: row.Accelerator,
+        vendor: row.Vendor,
+        subtitle: `${row.Architecture} · ${row.Interface} · ${state.runtime}${backend.backend === "vulkan" ? " via Vulkan fallback" : ""}`,
+        memory: gpuPool + hostPool,
+        physicalMemory: Number(row["Memory (GB)"]),
+        bandwidth: Number(row["Bandwidth (GB/s)"]),
+        power: row["TDP / board power (W)"],
+        speed: offloaded ? splitSpeed(state.model, state.bits, state.users, need, gpuPool, gpuRate, state.hostCpu, state.runtime) : tokPerSecond(row, state.model, false),
+        fits: !blocker,
+        blocker,
+        gpuShare: offloaded ? gpuPool / need : null,
+        evidence: row["Evidence status"],
+        source: row["Source URL"],
+        kind: "gpu",
+      };
+    });
 }
 
 function evidenceScore(text) {
@@ -433,15 +490,36 @@ function setModel(model) {
   render();
 }
 
+function modelWarnings() {
+  const model = state.model;
+  const messages = [];
+  const limit = Number(model["Max context"]);
+  if (limit && state.context > limit) messages.push({ text: `${state.context.toLocaleString()} tokens of context is above this model's published limit of ${limit.toLocaleString()}. Memory is sized for the context you selected.` });
+  if (state.promptTokens + state.answerTokens > state.context) messages.push({ text: `Prompt (${state.promptTokens.toLocaleString()}) plus answer (${state.answerTokens.toLocaleString()}) tokens do not fit in a ${state.context.toLocaleString()}-token context.` });
+  const rule = MF.taskRule(taskRules, state.task);
+  if (rule.vlm && !MF.isVlm(model)) messages.push({ text: `${state.task} needs a vision-language model. ${model.Model} is listed as ${model.Type || "text only"}.`, blocker: true });
+  const floor = requiredBits(model);
+  if (state.bits < floor) messages.push({ text: `The selected quantization (${state.bits} bits) is below the ${floor}-bit floor for ${state.task}. ${rule.why}`.trim(), blocker: true });
+  const support = archSupport(model);
+  if (support === "N") messages.push({ text: `${state.runtime} cannot load the ${model["Runtime arch"]} architecture, so no hardware is shown as fitting. Choose another runtime.`, blocker: true });
+  if (support === "P") messages.push({ text: `${state.runtime} supports the ${model["Runtime arch"]} architecture only partially. Check the runtime's release notes before committing.` });
+  messages.push(...platformWarnings({ gpu: state.preferredGpu, cpu: state.hostCpu, ram: state.hostRam, quantity: state.gpuQuantity, offload: state.offload, runtime: state.runtime }));
+  return messages;
+}
+
 function renderSummary() {
   const need = memoryNeed(state.model);
-  const allRows = hardwareRows();
-  const fits = allRows.filter((row) => row.fits).length;
+  const gpuFits = hardwareRowsForView("gpus").filter((row) => row.fits).length;
+  const cpuFits = hardwareRowsForView("cpus").filter((row) => row.fits).length;
+  byId("model-summary-kicker").textContent = ["Selected model", state.model.Type, state.model.Year].filter(Boolean).join(" · ");
   byId("model-summary-title").textContent = state.model.Model;
   byId("total-params").textContent = `${decimal.format(state.model["Total params (B)"])}B`;
   byId("active-params").textContent = `${decimal.format(state.model["Active params (B)"])}B`;
   byId("need-memory").textContent = `${decimal.format(need.total)} GB`;
-  byId("fits-count").textContent = fits;
+  byId("fits-count").textContent = state.view === "cpus" ? cpuFits : gpuFits;
+  byId("fits-label").textContent = state.view === "cpus" ? "CPU fits" : "GPU fits";
+  byId("gpu-count").textContent = gpuFits;
+  byId("cpu-count").textContent = cpuFits;
   byId("weights-label").textContent = `${decimal.format(need.weights)} GB`;
   byId("kv-label").textContent = `${decimal.format(need.kv)} GB`;
   byId("runtime-label").textContent = `${decimal.format(need.runtime)} GB`;
@@ -453,7 +531,7 @@ function renderSummary() {
   const minBits = requiredBits(state.model);
   byId("profile-note").innerHTML = `<strong>${escapeHtml(state.task)}</strong> requires ≥ ${minBits} bits for this model. Selected quant is ${state.bits} bits${state.bits < minBits ? ' <span class="warning">— below the task-safe floor.</span>' : ' — meets the task-safe floor.'} ${state.offload === "Y" && state.hostCpu ? `Host offload pool: ${decimal.format(hostOffloadGb())} GB from ${escapeHtml(state.hostCpu["CPU / platform"])}.` : ""} Response at target: ~${decimal.format(state.answerTokens / state.target)} s after prefill; prompt/context use ${decimal.format(state.promptTokens / state.context * 100)}%.`;
   byId("memory-parity").innerHTML = `<span><b>Excel fit estimate</b> ${decimal.format(excel.total)} GB</span><span><b>Web estimate</b> ${decimal.format(need.total)} GB</span><span class="${Math.abs(parityDelta) > 2 ? "delta-hot" : ""}"><b>Delta</b> ${parityDelta >= 0 ? "+" : ""}${decimal.format(parityDelta)}%</span>`;
-  byId("cpu-count").textContent = hardwareRowsForView("cpus").filter((row) => row.fits).length;
+  renderWarnings("model-warnings", modelWarnings());
 }
 
 function hardwareRowsForView(view) {
@@ -464,25 +542,14 @@ function hardwareRowsForView(view) {
   return rows;
 }
 
-function excelEfficiency(hardware, cpu = false) {
-  if (!cpu) {
-    if (hardware.Vendor === "Intel") return 0.5;
-    if (hardware.Vendor === "Apple") return 0.65;
-    if (hardware.Vendor === "NVIDIA" && String(hardware.Accelerator) === "GT 710 1GB") return 0.45;
-    return hardware.Vendor === "NVIDIA" ? 0.65 : 0.6;
-  }
-  const name = String(hardware["CPU / platform"] || "");
-  if (/^Mac |Apple M4/.test(name)) return 0.65;
-  if (/Jetson/.test(name)) return 0.6;
-  return 0.55;
-}
-
+// Workbook "1 Plan a Build" speed: the whole KV allocation is added to the bytes read per token.
 function excelTokPerSecond(hardware, model, cpu = false) {
-  const bandwidth = Number(cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"]);
-  const kv = kvPerTokenGb(model, state.kvBits) * state.context * state.users;
-  const denominator = Number(model["Active params (B)"]) * state.bits / 8 + kv;
-  const quantityScale = cpu ? 1 : 1 + 0.8 * (state.gpuQuantity - 1);
-  return efficiency(cpu ? "" : hardware.Vendor, cpu, hardware) * bandwidth * quantityScale / denominator / state.users;
+  return MF.excelDecodeTokPerSecond(model, {
+    bits: state.bits, kvBits: state.kvBits, context: state.context, users: state.users,
+    efficiency: efficiency(hardware, cpu),
+    bandwidth: cpu ? hardware["Memory BW (GB/s)"] : hardware["Bandwidth (GB/s)"],
+    quantity: cpu ? 1 : state.gpuQuantity,
+  });
 }
 
 function vendorInitial(vendor, name) {
@@ -530,7 +597,7 @@ function renderRows() {
     const ratio = row.memory / need;
     const bar = Math.min(100, row.memory / Math.max(need, row.memory) * 100);
     const speedClass = row.fits && row.speed >= state.target ? "fast" : "slow";
-    const speedLabel = row.fits ? (row.speed >= state.target ? "Meets target" : "Fits, slower") : "Memory shortfall";
+    const speedLabel = row.fits ? (row.speed >= state.target ? "Meets target" : "Fits, slower") : row.blocker;
     const excelSpeed = excelTokPerSecond(row.raw, state.model, row.kind === "cpu");
     const speedDelta = excelSpeed ? (row.speed / excelSpeed - 1) * 100 : 0;
     const evidenceLevel = evidenceClass(row.evidence);
@@ -540,9 +607,9 @@ function renderRows() {
         <div class="hardware-name"><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.subtitle)}</small></div>
       </div>
       <div class="fit-cell">
-        <div class="fit-meta"><b>${decimal.format(row.memory)} GB usable</b><span>${row.fits ? `${decimal.format(ratio * 100)}%` : `short ${decimal.format(need - row.memory)} GB`}</span></div>
-        <div class="fit-bar ${row.fits ? "" : "over"}"><span style="width:${bar}%"></span></div>
-        <div class="fit-copy">Need <strong>${decimal.format(need)} GB</strong> from ${decimal.format(row.physicalMemory)} GB ${row.kind === "gpu" ? "device memory" : "system RAM"}</div>
+        <div class="fit-meta"><b>${decimal.format(row.memory)} GB usable</b><span>${row.memory >= need ? `${decimal.format(ratio * 100)}%` : `short ${decimal.format(need - row.memory)} GB`}</span></div>
+        <div class="fit-bar ${row.memory >= need ? "" : "over"}"><span style="width:${bar}%"></span></div>
+        <div class="fit-copy">Need <strong>${decimal.format(need)} GB</strong> from ${decimal.format(row.physicalMemory)} GB ${row.kind === "gpu" ? "device memory" : "system RAM"}${row.gpuShare === null ? "" : ` · ${Math.round(row.gpuShare * 100)}% on GPU, rest on host RAM`}</div>
       </div>
       <div class="speed-cell"><strong class="${speedClass}">${decimal.format(row.speed)}</strong><small>tok/s web · ${speedLabel}</small><small>Excel ${decimal.format(excelSpeed)} tok/s</small><small class="delta">${speedDelta >= 0 ? "+" : ""}${decimal.format(speedDelta)}% web vs Excel</small></div>
       <div class="power-cell">${row.power ?? "—"} W</div>
@@ -564,9 +631,16 @@ function render() {
   renderRows();
 }
 
+function modelSearchText(row) {
+  return `${row.Model} ${row.Vendor} ${row.Type} ${row["Runtime arch"]} ${row.License}`.toLowerCase();
+}
+
 function refreshModelDropdown() {
   const select = byId("model-search");
-  const rows = state.data.models.filter((row) => modelMatchesFilters(row, "model"));
+  const filtered = state.data.models.filter((row) => modelMatchesFilters(row, "model"));
+  let rows = state.modelQuery ? filtered.filter((row) => modelSearchText(row).includes(state.modelQuery)) : filtered;
+  // Typing in the quick filter narrows the list but never swaps the model already selected.
+  if (state.model && filtered.includes(state.model) && !rows.includes(state.model)) rows = [state.model, ...rows];
   select.replaceChildren();
   for (const row of rows) select.add(new Option(`${row.Model} · ${row.Vendor} · ${decimal.format(row["Total params (B)"])}B`, row.Model));
   select.value = rows.some((row) => row.Model === state.model?.Model) ? state.model.Model : rows[0]?.Model || "";
@@ -742,36 +816,41 @@ function renderParityAudit() {
   host.innerHTML = `<div class="parity-metrics"><div><strong>${signed(a.memory_delta_pct.median)}</strong><small>Median 8K memory delta</small></div><div><strong>${signed(a.gpu_decode_delta_pct.median)}</strong><small>Median 8K GPU decode delta</small></div><div><strong>${signed(b.gpu_decode_delta_pct.median)}</strong><small>Median 32K GPU decode delta</small></div><div><strong>${signed(b.cpu_decode_delta_pct.median)}</strong><small>Median 32K CPU decode delta</small></div></div><p class="parity-caption">Positive means the app is higher. At 8K, median deltas are ${signed(a.memory_delta_pct.median)} memory, ${signed(a.gpu_decode_delta_pct.median)} GPU decode, and ${signed(a.cpu_decode_delta_pct.median)} CPU decode. At 32K they are ${signed(b.memory_delta_pct.median)} memory, ${signed(b.gpu_decode_delta_pct.median)} GPU decode, and ${signed(b.cpu_decode_delta_pct.median)} CPU decode. The remaining speed gap comes from Excel charging the whole KV allocation into the per-token traffic denominator.</p>`;
 }
 
+function hardwareGpuPool(item) {
+  const raw = state.hardwareVram > 0 ? state.hardwareVram : Number(item.raw["Memory (GB)"]);
+  return MF.gpuUsableGb(raw, state.hardwareGpuQuantity, state.hardwareMemoryHeadroom);
+}
+
+function hardwareHostPool(item) {
+  return item.kind === "gpu" ? offloadPoolGb(item.raw, state.hardwareCpu, state.hardwareRam, state.hardwareOffload, state.hardwareRuntime) : 0;
+}
+
 function hardwareMemory(item) {
-  if (item.kind === "gpu") {
-    const raw = state.hardwareVram > 0 ? state.hardwareVram : Number(item.raw["Memory (GB)"]);
-    const gpuPool = raw * (1 - state.hardwareMemoryHeadroom / 100) * state.hardwareGpuQuantity;
-    const hostPool = state.hardwareOffload === "Y" && state.hardwareCpu ? Math.max(0, (state.hardwareRam || Number(state.hardwareCpu["Max RAM (GB)"])) - 8) : 0;
-    return gpuPool + hostPool;
-  }
+  if (item.kind === "gpu") return hardwareGpuPool(item) + hardwareHostPool(item);
   const raw = state.hardwareRam > 0 ? state.hardwareRam : Number(item.raw["Max RAM (GB)"]);
-  return raw - Math.min(8, raw * 0.25);
+  return MF.cpuUsableGb(raw);
 }
 
 function hardwareBandwidth(item) {
   const raw = Number(item.kind === "gpu" ? item.raw["Bandwidth (GB/s)"] : item.raw["Memory BW (GB/s)"]);
-  const quantity = item.kind === "gpu" ? 1 + 0.8 * (state.hardwareGpuQuantity - 1) : 1;
+  const quantity = item.kind === "gpu" ? MF.quantityScale(state.hardwareGpuQuantity) : 1;
   return raw * quantity * state.hardwareBandwidthUtil / 100;
 }
 
 function hardwareNeed(model) {
-  const weights = Number(model["Total params (B)"]) * state.hardwareBits / 8 * 1.03;
-  const kv = kvPerTokenGb(model, state.hardwareKvBits) * state.hardwareContext * state.hardwareUsers;
-  return { weights, kv, total: weights + kv + weights * 0.07 };
+  return MF.memoryNeed(model, { bits: state.hardwareBits, kvBits: state.hardwareKvBits, context: state.hardwareContext, users: state.hardwareUsers });
 }
 
-function hardwareSpeed(item, model) {
-  const denominator = Number(model["Active params (B)"]) * state.hardwareBits / 8;
-  const oldRuntime = state.runtime;
-  state.runtime = state.hardwareRuntime;
-  const eff = efficiency(item.kind === "gpu" ? item.raw.Vendor : "", item.kind === "cpu", item.raw);
-  state.runtime = oldRuntime;
-  return eff * hardwareBandwidth(item) / denominator / state.hardwareUsers;
+function hardwareSpeed(item, model, need) {
+  const cpu = item.kind === "cpu";
+  const rate = efficiency(item.raw, cpu, state.hardwareRuntime) * hardwareBandwidth(item);
+  const perToken = Number(model["Active params (B)"]) * state.hardwareBits / 8;
+  if (!perToken) return 0;
+  if (!cpu) {
+    const gpuPool = hardwareGpuPool(item);
+    if (hardwareHostPool(item) > 0 && need > gpuPool) return splitSpeed(model, state.hardwareBits, state.hardwareUsers, need, gpuPool, rate, state.hardwareCpu, state.hardwareRuntime);
+  }
+  return rate / perToken / state.hardwareUsers;
 }
 
 function currentHardwareItem() {
@@ -798,16 +877,37 @@ function modelComparator(a, b) {
   return String(a.model.Model).localeCompare(String(b.model.Model));
 }
 
-function compatibleModels(item) {
+function compatibleModels(item, { ignoreShowFilter = false } = {}) {
   const capacity = hardwareMemory(item);
-  const filter = byId("hardware-model-filter").value;
+  const filter = ignoreShowFilter ? "all" : byId("hardware-model-filter").value;
+  const supported = efficiency(item.raw, item.kind === "cpu", state.hardwareRuntime) > 0;
+  const rule = MF.taskRule(taskRules, state.hardwareTask);
   return state.data.models
     .filter((model) => model["Active params (B)"] != null && model.Layers != null && model["KV heads"] != null && model["Head dim"] != null)
     .filter((model) => modelMatchesFilters(model, "hardware"))
-    .map((model) => ({ model, need: hardwareNeed(model).total, speed: hardwareSpeed(item, model) }))
-    .map((row) => ({ ...row, safeQuant: state.hardwareBits >= requiredBits(row.model, state.hardwareTask) && (state.hardwareTask !== "Vision (image + text)" || /VLM|Vision/i.test(row.model.Type || "")), fits: row.need <= capacity && state.hardwareBits >= requiredBits(row.model, state.hardwareTask) && (state.hardwareTask !== "Vision (image + text)" || /VLM|Vision/i.test(row.model.Type || "")) }))
-    .filter((row) => filter === "all" || (filter === "fits" ? row.fits : row.fits && row.safeQuant && row.speed >= state.hardwareTarget))
+    .filter((model) => !state.hardwareModelQuery || modelSearchText(model).includes(state.hardwareModelQuery))
+    .map((model) => {
+      const need = hardwareNeed(model).total;
+      const blocker = fitBlocker(model, { bits: state.hardwareBits, task: state.hardwareTask, runtime: state.hardwareRuntime, supported, memoryOk: need <= capacity });
+      return { model, need, speed: hardwareSpeed(item, model, need), safeQuant: MF.taskAllows(model, rule, state.hardwareBits), fits: !blocker, blocker };
+    })
+    .filter((row) => filter === "all" || (filter === "fits" ? row.fits : row.fits && row.speed >= state.hardwareTarget))
     .sort(modelComparator);
+}
+
+function hardwareWarnings(item) {
+  const messages = [];
+  const cpu = item.kind === "cpu";
+  if (!cpu) {
+    const backend = gpuEfficiency(item.raw, state.hardwareRuntime);
+    if (!backend.efficiency) messages.push({ text: `${state.hardwareRuntime} does not run on ${item.name}, so no model is shown as fitting. Choose another runtime.`, blocker: true });
+    else if (backend.backend === "vulkan") messages.push({ text: `${state.hardwareRuntime} has no native backend for ${item.name}. Speed uses the slower Vulkan fallback (${Math.round(backend.efficiency * 100)}% bandwidth efficiency).` });
+    if (MF.isUnifiedMemory(item.raw) && state.hardwareGpuQuantity > 1) messages.push({ text: `${item.name} is a single unified-memory system. A quantity above 1 assumes separate machines and is not a supported cluster estimate.` });
+  } else if (!efficiency(item.raw, true, state.hardwareRuntime)) {
+    messages.push({ text: `${state.hardwareRuntime} does not run on ${item.name}, so no model is shown as fitting. Choose another runtime.`, blocker: true });
+  }
+  messages.push(...platformWarnings({ gpu: cpu ? null : item.raw, cpu: state.hardwareCpu, ram: state.hardwareRam, quantity: cpu ? 0 : state.hardwareGpuQuantity, offload: cpu ? "N" : state.hardwareOffload, runtime: state.hardwareRuntime }));
+  return messages;
 }
 
 function renderHardwareView() {
@@ -817,11 +917,11 @@ function renderHardwareView() {
   const capacity = hardwareMemory(item);
   const rows = compatibleModels(item);
   updateColumnSortButtons();
-  const fits = compatibleModels(item).filter((row) => row.fits).length;
+  const fits = compatibleModels(item, { ignoreShowFilter: true }).filter((row) => row.fits).length;
   byId("model-sort-output").textContent = `Sorted by ${byId("model-sort").selectedOptions[0].textContent} · ${rows.length} shown`;
-  const source = item.raw["Source URL"] || "";
-  const taskMinimum = taskRules[state.hardwareTask] || taskRules["General chat / Q&A"];
-  byId("hardware-profile-note").textContent = `${state.hardwareTask}: model rows below the task quant floor are not shown as meeting the speed target. ${state.hardwareOffload === "Y" && state.hardwareCpu ? `CPU offload may use ${decimal.format(Number(byId("hardware-ram-input").value || state.hardwareCpu["Max RAM (GB)"]))} GB host RAM.` : "CPU offload disabled."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
+  const hostPool = hardwareHostPool(item);
+  byId("hardware-profile-note").textContent = `${state.hardwareTask}: models below the task quantization floor are not counted as fitting. ${hostPool > 0 ? `CPU offload adds ${decimal.format(hostPool)} GB of host RAM; overflow layers run at CPU speed.` : "CPU offload is off."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
+  renderWarnings("hardware-warnings", hardwareWarnings(item));
   const summary = byId("hardware-summary");
   const planning = String(item.raw["Evidence status"] || "").includes("Pre-release planning");
   summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}${planning ? " · PRE-RELEASE PLANNING" : ""}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div>`;
@@ -832,15 +932,15 @@ function renderHardwareView() {
     host.innerHTML = `<div class="empty-state"><h3>No model matches these filters.</h3><p>Lower the quantization, shorten the context, or select a different model family.</p></div>`;
     return;
   }
-  for (const row of rows.slice(0, 150)) {
+  for (const row of rows) {
     const model = row.model;
     const ratio = row.need / capacity * 100;
     const fast = row.fits && row.speed >= state.hardwareTarget;
     const article = document.createElement("article");
     article.className = "result-row model-result-row";
     if (!row.safeQuant) article.classList.add("quality-warning");
-    const excelNeed = excelMemoryNeed(model, state.hardwareBits, state.hardwareContext, state.hardwareUsers).total;
-    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.fits ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.fits ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : "Memory shortfall"}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Know more about ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i><span>Know more</span></button></div>`;
+    const excelNeed = excelMemoryNeed(model, state.hardwareBits, state.hardwareContext, state.hardwareUsers, state.hardwareKvBits).total;
+    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.need <= capacity ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.need <= capacity ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : row.blocker}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Know more about ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i><span>Know more</span></button></div>`;
     article.querySelector(".row-detail").addEventListener("click", () => openEvidence(model, "model"));
     host.append(article);
   }
@@ -856,6 +956,7 @@ function showPage(page) {
   });
   $$(".nav-page").forEach((button) => button.classList.toggle("active", button.dataset.page === page));
   if (page === "hardware") renderHardwareView();
+  if (page === "pipeline") window.ModelFitPipeline.render();
   if (page === "database") renderDatabase();
   if (page === "evidence") renderEvidence();
   if (page === "knowledge") renderKnowledge();
@@ -863,6 +964,16 @@ function showPage(page) {
 }
 
 function populateFilterOptions() {
+  const tasks = Object.keys(taskRules);
+  for (const [ids, names, fallback] of [[["runtime-select", "hardware-runtime-select"], runtimeNames(), "llama.cpp"], [["task-select", "hardware-task-select"], tasks, tasks[0]]]) {
+    for (const id of ids) {
+      const select = byId(id);
+      const previous = select.value;
+      select.replaceChildren(...names.map((name) => new Option(name, name)));
+      select.value = names.includes(previous) ? previous : fallback;
+    }
+  }
+  for (const sheet of [...new Set(state.data.evidence.map((row) => row.Sheet).filter(Boolean))].sort()) byId("evidence-sheet-filter").add(new Option(sheet, sheet));
   const vendors = [...new Set(state.data.models.map((row) => row.Vendor).filter(Boolean))].sort();
   const types = [...new Set(state.data.models.map((row) => row.Type).filter(Boolean))].sort();
   for (const id of ["model-vendor-filter", "hardware-model-vendor-filter"]) for (const value of vendors) byId(id).add(new Option(value, value));
@@ -880,7 +991,11 @@ function populateFilterOptions() {
   state.hardwareRam = Number(defaultCpu["Max RAM (GB)"]);
   byId("hardware-cpu-select").value = defaultCpu["CPU / platform"];
   syncHardwareCpuMemory(defaultCpu);
-  selectGlobalGpu(defaultGpu, { renderHardware: false });
+  if (defaultGpu) selectGlobalGpu(defaultGpu, { renderHardware: false });
+  else {
+    state.hardware = defaultCpu;
+    state.hardwareKind = "cpu";
+  }
   selectGlobalGpu(null, { renderHardware: false });
   refreshModelDropdown();
 }
@@ -952,14 +1067,21 @@ function preparePrivateMeasurements(payload) {
   return measurements;
 }
 
+// Newest catalog rows: latest release year, most recently synced first, only rows with source-verified values.
+function latestModels(limit = 20) {
+  const year = Math.max(...state.data.models.map((row) => Number(row.Year) || 0));
+  return state.data.models
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => Number(row.Year) === year && evidenceScore(row["Evidence status"]) > 0)
+    .sort((a, b) => String(b.row["Last synced"] || "").localeCompare(String(a.row["Last synced"] || "")) || b.index - a.index)
+    .slice(0, limit)
+    .map(({ row }) => row);
+}
+
 function renderKnowledge() {
-  const featured = [
-    "Qwen3.8 Flash-Next 180B-A6B", "Gemma 4 E2B", "Gemma 4 E4B",
-    "Carbon-X 14.8B", "Carbon 3B", "Carbon 8B", "Carbon 500M",
-  ];
   const host = byId("knowledge-latest-models");
   host.replaceChildren();
-  const rows = featured.map((name) => state.data.models.find((row) => row.Model === name)).filter(Boolean);
+  const rows = latestModels();
   for (const row of rows) {
     const article = document.createElement("article");
     article.className = "knowledge-model";
@@ -967,7 +1089,7 @@ function renderKnowledge() {
     article.querySelector("button").addEventListener("click", () => openEvidence(row, "model"));
     host.append(article);
   }
-  byId("knowledge-latest-count").textContent = `${rows.length} verified additions`;
+  byId("knowledge-latest-count").textContent = `${rows.length} newest verified rows`;
   byId("knowledge-evidence-count").textContent = `${state.data.evidence.length} checks`;
   iconize();
 }
@@ -1007,13 +1129,29 @@ function sortedDatabaseRows() {
   return rows;
 }
 
+function renderLoadMore(id, shown, total, step, onMore) {
+  const wrap = byId(id);
+  wrap.hidden = total <= shown;
+  wrap.replaceChildren();
+  if (wrap.hidden) return;
+  const label = document.createElement("span");
+  label.textContent = `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}`;
+  const button = document.createElement("button");
+  button.className = "secondary-button";
+  button.type = "button";
+  button.textContent = `Show ${Math.min(step, total - shown).toLocaleString()} more`;
+  button.addEventListener("click", onMore);
+  wrap.append(label, button);
+}
+
 function renderDatabase() {
   const name = byId("database-select").value;
   const table = byId("database-table");
   const sort = state.databaseSort;
   table.replaceChildren();
   const sortedRows = sortedDatabaseRows();
-  const visible = sortedRows.slice(0, 500);
+  const visible = sortedRows.slice(0, state.databaseLimit);
+  renderLoadMore("database-more-wrap", visible.length, sortedRows.length, DATABASE_PAGE, () => { state.databaseLimit += DATABASE_PAGE; renderDatabase(); });
   const allCols = databaseRows().length ? Object.keys(databaseRows()[0]).filter((key) => !key.startsWith("_")) : [];
   const sortSelect = byId("database-sort-column");
   const currentOptions = [...sortSelect.options].map((option) => option.value);
@@ -1078,7 +1216,8 @@ function sortedEvidenceRows() {
     const matchesIntel = !state.intelOnly || !["GPUs", "CPUs"].includes(row.Sheet) || (row.Sheet === "GPUs" ? intelGpuNames.has(row.Item) : intelCpuNames.has(row.Item));
     const matchesQuery = (!query || Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query))) && matchesIntel;
     const matchesStatus = state.evidenceStatus === "all" || (state.evidenceStatus === "OTHER" ? !["VERIFIED", "MISMATCH", "DERIVED/ESTIMATE"].includes(row.Status) : row.Status === state.evidenceStatus);
-    return matchesQuery && matchesStatus;
+    const matchesSheet = state.evidenceSheet === "all" || row.Sheet === state.evidenceSheet;
+    return matchesQuery && matchesStatus && matchesSheet;
   });
   rows.sort((a, b) => compareValues(a[state.evidenceSort.column], b[state.evidenceSort.column], state.evidenceSort.direction));
   return rows;
@@ -1088,7 +1227,8 @@ function renderEvidence() {
   const sortedRows = sortedEvidenceRows();
   byId("evidence-count").textContent = `${sortedRows.length} matching checks · ${state.data.evidence.length} total`;
   byId("evidence-sort-output").textContent = `Sorted by ${byId("evidence-sort-column").selectedOptions[0].textContent} · ${state.evidenceSort.direction === "asc" ? "ascending" : "descending"} · ${sortedRows.length} matching checks`;
-  const rows = sortedRows.slice(0, 300);
+  const rows = sortedRows.slice(0, state.evidenceLimit);
+  renderLoadMore("evidence-more-wrap", rows.length, sortedRows.length, EVIDENCE_PAGE, () => { state.evidenceLimit += EVIDENCE_PAGE; renderEvidence(); });
   const host = byId("evidence-results");
   host.replaceChildren();
   for (const row of rows) {
@@ -1110,7 +1250,85 @@ function downloadCsv(name, rows) {
   const link = document.createElement("a"); link.href = url; link.download = `${name}.csv`; link.click(); URL.revokeObjectURL(url);
 }
 
+function renderVerification() {
+  const host = byId("verification-content");
+  const report = state.verification;
+  if (!report || !report.summary) { host.textContent = "No check report is published with this build."; return; }
+  const total = report.summary.pass + report.summary.fail;
+  host.innerHTML = `<div class="parity-metrics"><div><strong>${report.summary.pass} / ${total}</strong><small>Checks passed</small></div><div><strong>${escapeHtml(String(report.generated || "").slice(0, 10))}</strong><small>Last run · ${escapeHtml(report.mode || "offline")}</small></div></div><ul class="verification-list">${(report.groups || []).map((group) => `<li><span>${escapeHtml(group.name)}</span><b class="${group.fail ? "fail" : ""}">${group.pass} passed${group.fail ? ` · ${group.fail} failed` : ""}${group.warn ? ` · ${group.warn} to review` : ""}</b></li>`).join("")}</ul><p class="parity-caption">Repeat every check with <code>python scripts/reverify_all.py</code>. Open this page with <code>?selftest=1</code> to exercise each control in both themes.</p>`;
+}
+
+async function copySummary() {
+  const need = memoryNeed(state.model);
+  const gpuFits = hardwareRowsForView("gpus").filter((row) => row.fits).length;
+  const cpuFits = hardwareRowsForView("cpus").filter((row) => row.fits).length;
+  const text = [
+    `Model Fit sizing: ${state.model.Model}`,
+    `Parameters: ${decimal.format(state.model["Total params (B)"])}B total, ${decimal.format(state.model["Active params (B)"])}B active`,
+    `Workload: ${byId("quant-select").value}, ${state.context.toLocaleString()} context, ${state.users} user${state.users > 1 ? "s" : ""}, KV ${state.kvBits}-bit, ${state.runtime}, ${state.task}`,
+    `Memory needed: ${decimal.format(need.total)} GB (weights ${decimal.format(need.weights)} + KV cache ${decimal.format(need.kv)} + runtime ${decimal.format(need.runtime)})`,
+    `Hardware that fits: ${gpuFits} GPUs, ${cpuFits} CPUs`,
+    "Speeds are bandwidth estimates, not benchmarks.",
+    location.href.split("?")[0],
+  ].join("\n");
+  const label = byId("copy-summary").querySelector("span");
+  try {
+    await navigator.clipboard.writeText(text);
+    label.textContent = "Copied";
+  } catch {
+    label.textContent = "Copy blocked";
+  }
+  setTimeout(() => { label.textContent = "Copy"; }, 1600);
+  return text;
+}
+
+function resetModelFilters() {
+  state.modelQuery = "";
+  state.minMemory = 0;
+  state.maxPower = 0;
+  byId("model-quick-filter").value = "";
+  byId("model-vendor-filter").value = "all";
+  byId("model-type-filter").value = "all";
+  byId("min-memory-filter").value = "0";
+  byId("max-power-filter").value = "0";
+  refreshModelDropdown();
+  render();
+}
+
+function resetHardwareFilters() {
+  state.hardwareModelQuery = "";
+  byId("hardware-model-quick-filter").value = "";
+  byId("hardware-model-vendor-filter").value = "all";
+  byId("hardware-model-type-filter").value = "all";
+  byId("hardware-model-filter").value = "fits";
+  renderHardwareView();
+}
+
+function filterGlossary(query) {
+  const list = $(".knowledge-glossary dl");
+  let shown = 0;
+  for (const entry of list.querySelectorAll(":scope > div:not(.empty-state)")) {
+    entry.hidden = Boolean(query) && !entry.textContent.toLowerCase().includes(query);
+    if (!entry.hidden) shown += 1;
+  }
+  let empty = list.querySelector(".empty-state");
+  if (!shown && !empty) {
+    empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<p>No glossary term matches. Clear the filter to see every term.</p>";
+    list.append(empty);
+  }
+  if (empty) empty.hidden = shown > 0;
+}
+
 function bindEvents() {
+  byId("model-quick-filter").addEventListener("input", (event) => { state.modelQuery = event.target.value.toLowerCase().trim(); refreshModelDropdown(); });
+  byId("hardware-model-quick-filter").addEventListener("input", (event) => { state.hardwareModelQuery = event.target.value.toLowerCase().trim(); renderHardwareView(); });
+  byId("reset-model-filters").addEventListener("click", resetModelFilters);
+  byId("reset-hardware-filters").addEventListener("click", resetHardwareFilters);
+  byId("copy-summary").addEventListener("click", copySummary);
+  byId("glossary-search").addEventListener("input", (event) => filterGlossary(event.target.value.toLowerCase().trim()));
+  byId("evidence-sheet-filter").addEventListener("change", (event) => { state.evidenceSheet = event.target.value; state.evidenceLimit = EVIDENCE_PAGE; renderEvidence(); });
   byId("model-search").addEventListener("change", (event) => {
     const model = state.data.models.find((row) => row.Model === event.target.value);
     if (model) setModel(model);
@@ -1150,9 +1368,10 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
 
   for (const button of $$(".nav-page")) button.addEventListener("click", () => showPage(button.dataset.page));
-  for (const button of [byId("intel-only-toggle"), byId("hardware-intel-only-toggle")]) button.addEventListener("click", () => {
+  const intelToggles = [byId("intel-only-toggle"), byId("hardware-intel-only-toggle"), byId("pipe-intel-only-toggle")];
+  for (const button of intelToggles) button.addEventListener("click", () => {
     state.intelOnly = !state.intelOnly;
-    for (const toggle of [byId("intel-only-toggle"), byId("hardware-intel-only-toggle")]) toggle.setAttribute("aria-pressed", String(state.intelOnly));
+    for (const toggle of intelToggles) toggle.setAttribute("aria-pressed", String(state.intelOnly));
     byId("vendor-select").value = state.intelOnly ? "Intel" : "all";
     state.vendor = state.intelOnly ? "Intel" : "all";
     refreshCatalogDropdowns();
@@ -1168,6 +1387,7 @@ function bindEvents() {
     refreshModelDropdown();
     render();
     if (state.page === "hardware") renderHardwareView();
+    if (state.page === "pipeline") window.ModelFitPipeline.render();
     if (state.page === "database") renderDatabase();
     if (state.page === "evidence") renderEvidence();
   });
@@ -1217,9 +1437,10 @@ function bindEvents() {
 
   byId("database-select").addEventListener("change", () => {
     state.databaseSort = { table: byId("database-select").value, column: "", direction: "asc" };
+    state.databaseLimit = DATABASE_PAGE;
     renderDatabase();
   });
-  byId("database-search").addEventListener("input", renderDatabase);
+  byId("database-search").addEventListener("input", () => { state.databaseLimit = DATABASE_PAGE; renderDatabase(); });
   byId("database-sort-column").addEventListener("change", (event) => {
     state.databaseSort = { table: byId("database-select").value, column: event.target.value, direction: "asc" };
     renderDatabase();
@@ -1230,7 +1451,7 @@ function bindEvents() {
   });
   byId("download-table").addEventListener("click", () => downloadCsv(byId("database-select").value, sortedDatabaseRows()));
   byId("download-evidence").addEventListener("click", () => downloadCsv("evidence", sortedEvidenceRows()));
-  byId("evidence-search").addEventListener("input", renderEvidence);
+  byId("evidence-search").addEventListener("input", () => { state.evidenceLimit = EVIDENCE_PAGE; renderEvidence(); });
   byId("evidence-sort-column").addEventListener("change", (event) => { state.evidenceSort.column = event.target.value; renderEvidence(); });
   byId("evidence-sort-direction").addEventListener("click", () => {
     state.evidenceSort.direction = state.evidenceSort.direction === "asc" ? "desc" : "asc";
@@ -1246,6 +1467,7 @@ function bindEvents() {
   for (const button of $$("[data-open-page]")) button.addEventListener("click", () => showPage(button.dataset.openPage));
   for (const button of $$(".status-filter")) button.addEventListener("click", () => {
     state.evidenceStatus = button.dataset.status;
+    state.evidenceLimit = EVIDENCE_PAGE;
     $$(".status-filter").forEach((item) => item.classList.toggle("active", item === button));
     renderEvidence();
   });
@@ -1256,6 +1478,9 @@ async function boot() {
     const response = await fetch("data.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`data.json returned ${response.status}`);
     state.data = await response.json();
+    efficiencyTable = MF.buildEfficiencyTable(state.data.libraries);
+    if (!Object.keys(efficiencyTable).length) throw new Error("data.json has no runtime table. Rebuild it with scripts/build_web_data.py.");
+    taskRules = MF.buildTaskRules(state.data.taskRules);
     try {
       const privateResponse = await fetch("private_reference.json", { cache: "no-store" });
       if (privateResponse.ok) {
@@ -1277,6 +1502,10 @@ async function boot() {
       const parityResponse = await fetch("parity.json", { cache: "no-store" });
       if (parityResponse.ok) state.parity = await parityResponse.json();
     } catch { state.parity = null; }
+    try {
+      const verificationResponse = await fetch("verification.json", { cache: "no-store" });
+      if (verificationResponse.ok) state.verification = await verificationResponse.json();
+    } catch { state.verification = null; }
     byId("dataset-count").textContent = `${state.data.models.length} models · ${state.data.gpus.length} GPUs · ${state.data.cpus.length} CPUs · ${state.data.evidence.length} checks`;
     const quantSelect = byId("quant-select");
     for (const quant of state.data.quants) {
@@ -1291,10 +1520,22 @@ async function boot() {
     state.model = state.data.models.find((row) => row.Model === "Qwen3 32B") || state.data.models[0];
     populateFilterOptions();
     bindEvents();
+    window.ModelFitPipeline.init({
+      data: state.data, efficiencyTable: () => efficiencyTable, runtimes: runtimeNames, intelOnly: () => state.intelOnly,
+      gpuLabel: gpuCatalogLabel, gpuName: gpuDisplayName, escapeHtml, iconize,
+    });
     render();
     renderEvidence();
     renderParityAudit();
+    renderVerification();
     iconize();
+    window.ModelFitApp = { state, showPage, render, renderHardwareView, hardwareRows, hardwareRowsForView, compatibleModels, currentHardwareItem, memoryNeed, copySummary, latestModels };
+    document.dispatchEvent(new CustomEvent("modelfit:ready"));
+    if (new URLSearchParams(location.search).has("selftest")) {
+      const script = document.createElement("script");
+      script.src = "selftest.js";
+      document.head.append(script);
+    }
   } catch (error) {
     byId("dataset-count").textContent = "Data could not be loaded";
     byId("model-summary-title").textContent = "Serve this page from a local or GitHub Pages web server.";

@@ -52,6 +52,7 @@ LICENSE_ALIASES = {
     "mrl": "mistral research", "mnpl": "mistral non-production", "qwen-research": "qwen research",
     "llama2": "llama 2", "llama3": "llama 3", "llama3.1": "llama 3.1", "llama3.2": "llama 3.2", "llama3.3": "llama 3.3",
     "llama4": "llama 4", "gemma": "gemma", "apache-2.0": "apache-2.0", "mit": "mit", "cc-by-nc-4.0": "cc-by-nc",
+    "lfm1.0": "lfm open license v1.0", "openmdw-1.1": "openmdw-1.1", "qwen-community-1.0": "qwen community 1.0",
 }
 # Display names used when the sheet value must be corrected.
 LICENSE_DISPLAY = {

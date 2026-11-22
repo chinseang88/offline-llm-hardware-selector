@@ -33,26 +33,35 @@ def source_facts(rows):
     return facts
 
 
-def main():
-    DOCS.mkdir(parents=True, exist_ok=True)
+def build_payload():
     evidence = evidence_rows()
-    payload = {
+    return {
         "generated": True,
         "models": load_rows("models"),
         "gpus": load_rows("gpus"),
         "cpus": load_rows("cpus"),
         "quants": load_rows("quant"),
+        "voiceModels": load_rows("voice_models"),
+        "libraries": load_rows("libraries") if (ROOT / "data" / "libraries.csv").exists() else [],
+        "archSupport": load_rows("arch_support") if (ROOT / "data" / "arch_support.csv").exists() else [],
+        "taskRules": load_rows("task_rules"),
         "referenceModels": load_rows("reference_models"),
         "evidence": evidence,
         "factsByItem": source_facts(evidence),
     }
+
+
+def main():
+    DOCS.mkdir(parents=True, exist_ok=True)
+    payload = build_payload()
+    evidence = payload["evidence"]
     output = DOCS / "data.json"
     output.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     parity_output = DOCS / "parity.json"
     parity_output.write_text(json.dumps(calculate_parity(), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"wrote {output} ({output.stat().st_size / 1024:.1f} KiB)")
     print(f"wrote {parity_output} ({parity_output.stat().st_size / 1024:.1f} KiB)")
-    print(f"rows: {len(payload['models'])} models, {len(payload['referenceModels'])} reference models, {len(payload['gpus'])} GPUs, {len(payload['cpus'])} CPUs, {len(evidence)} evidence checks")
+    print(f"rows: {len(payload['models'])} models, {len(payload['voiceModels'])} voice, {len(payload['libraries'])} runtimes, {len(payload['archSupport'])} arches, {len(payload['taskRules'])} task rules, {len(payload['referenceModels'])} reference models, {len(payload['gpus'])} GPUs, {len(payload['cpus'])} CPUs, {len(evidence)} evidence checks")
 
 
 if __name__ == "__main__":

@@ -6,20 +6,21 @@ Examples
   python scripts/selector.py --hw "RTX 5090"                    # what fits on this accelerator
   python scripts/selector.py --list models | --list gpus | --list cpus
   python scripts/selector.py "Qwen3 32B" --json
+  python scripts/selector.py "Qwen3 32B" --runtime vLLM --kv-bits 16 --task Coding
 
-Sizing model (same as the workbook):
+Sizing model (scripts/formulas.py, the same formulas as the web app's docs/formulas.js):
   weights_GB      = total_params_B * bits/8 * 1.03
-  kv_per_token_GB = 2 * layers * kv_heads * head_dim * 2 bytes / 1e9        (FP16 KV cache)
-  need_GB         = weights + kv_per_token * context * users + 1.5 (runtime)
-  usable_GB       = GPU memory * 0.92 ; CPU RAM: max_ram - min(8, 0.25*max_ram)
-  tok/s per user  = eff * bandwidth_GBps / (active_params_B * bits/8 + kv_per_token_GB) / users
-                    eff = 0.55 Intel GPU / CPU, 0.65 Apple, 0.60 other GPUs
-These are planning estimates, not benchmarks.
+  kv_per_token_GB = 2 * layers * kv_heads * head_dim * kv_bits/8 / 1e9      (--kv-bits, default 8)
+  need_GB         = weights + kv_per_token * context * users + 0.07 * weights (runtime)
+  usable_GB       = GPU memory * 0.92 * cards ; CPU RAM: max_ram - min(8, 0.25*max_ram)
+  tok/s per user  = eff * bandwidth_GBps * (1 + 0.8*(cards-1)) / (active_params_B * bits/8) / users
+                    eff = data/libraries.csv cell for --runtime and the hardware's runtime class
+The workbook's "1 Plan a Build" sheet uses a different runtime allowance and speed denominator;
+scripts/selector_parity.py reports the difference. These are planning estimates, not benchmarks.
 """
 import argparse, json, re, sys
 from common import load_rows
-
-RUNTIME_GB = 1.5
+import formulas as F
 
 def pick(rows, key, name):
     name_l = name.lower()
@@ -40,23 +41,12 @@ def quant_bits(quant_rows, q):
             return float(r["Bits/weight (eff.)"]), r["Quantization"]
     raise SystemExit("Unknown quant. Options: " + ", ".join(str(r["Quantization"]) for r in quant_rows))
 
-def kv_per_token_gb(m):
-    return 2 * float(m["Layers"]) * float(m["KV heads"]) * float(m["Head dim"]) * 2 / 1e9
-
-def need_gb(m, bits, context, users):
-    weights = float(m["Total params (B)"]) * bits / 8 * 1.03
-    kv = kv_per_token_gb(m) * context * users
-    return weights, kv, weights + kv + RUNTIME_GB
-
-def eff_for(vendor, is_cpu=False):
-    if is_cpu or vendor == "Intel":
-        return 0.55
-    return 0.65 if vendor == "Apple" else 0.60
+def need_gb(m, bits, context, users, kv_bits=8):
+    need = F.memory_need(m, bits, context, users, kv_bits)
+    return need["weights"], need["kv"], need["runtime"], need["total"]
 
 def tps(bw, eff, m, bits, users, qty=1):
-    per_tok = float(m["Active params (B)"]) * bits / 8 + kv_per_token_gb(m)
-    scale = min(qty, 8) * (0.8 if qty > 1 else 1)
-    return eff * bw * scale / per_tok / users
+    return F.decode_tok_per_second(m["Active params (B)"], bits, eff, bw, users, qty)
 
 def evidence_tag(r):
     s = str(r.get("Evidence status") or "")
@@ -69,6 +59,9 @@ def main():
     ap.add_argument("--context", type=int, default=8192)
     ap.add_argument("--users", type=int, default=1)
     ap.add_argument("--target-tps", type=float, default=20.0)
+    ap.add_argument("--kv-bits", type=int, default=8, choices=[4, 8, 16], help="KV-cache precision (default 8; 16 = FP16)")
+    ap.add_argument("--runtime", default="llama.cpp", help="inference runtime from data/libraries.csv (sets bandwidth efficiency)")
+    ap.add_argument("--task", help="primary task from data/task_rules.csv; applies its minimum safe quantization")
     ap.add_argument("--vendor", help="filter accelerators by vendor (Intel/NVIDIA/AMD/Apple)")
     ap.add_argument("--max-cards", type=int, default=1, help="allow up to N identical cards (tensor-parallel)")
     ap.add_argument("--include-legacy", action="store_true", help="include used/legacy GPUs")
@@ -85,6 +78,13 @@ def main():
             print(r[key])
         return
     bits, qname = quant_bits(quants, a.quant)
+    table = F.build_efficiency_table(load_rows("libraries"))
+    if a.runtime not in table:
+        raise SystemExit("Unknown runtime. Options: " + ", ".join(table))
+    rules = F.build_task_rules(load_rows("task_rules"))
+    if a.task and a.task not in rules:
+        raise SystemExit("Unknown task. Options: " + "; ".join(rules))
+    rule = rules[a.task] if a.task else None
 
     if a.hw:
         gpu = next((g for g in gpus if a.hw.lower() in str(g["Accelerator"]).lower()), None)
@@ -92,23 +92,30 @@ def main():
         if not gpu and not cpu:
             raise SystemExit("No accelerator/CPU matching " + a.hw)
         if gpu:
-            usable, bw, eff, label = float(gpu["Memory (GB)"]) * 0.92, float(gpu["Bandwidth (GB/s)"]), eff_for(gpu["Vendor"]), gpu["Accelerator"]
+            usable, bw, label = F.gpu_usable_gb(gpu["Memory (GB)"]), float(gpu["Bandwidth (GB/s)"]), gpu["Accelerator"]
+            eff = F.gpu_runtime_efficiency(table, a.runtime, gpu)["efficiency"]
             src = gpu.get("Source URL")
         else:
-            mr = float(cpu["Max RAM (GB)"]); usable, bw, eff, label = mr - min(8, 0.25 * mr), float(cpu["Memory BW (GB/s)"]), 0.55, cpu["CPU / platform"]
+            usable, bw, label = F.cpu_usable_gb(cpu["Max RAM (GB)"]), float(cpu["Memory BW (GB/s)"]), cpu["CPU / platform"]
+            eff = F.cpu_runtime_efficiency(table, a.runtime, cpu)
             src = cpu.get("Source URL")
+        if not eff:
+            raise SystemExit(f"{a.runtime} does not run on {label}. Choose another --runtime.")
         out = []
         for m in models:
             if not all(m.get(k) for k in ("Total params (B)", "Active params (B)", "Layers", "KV heads", "Head dim")):
                 continue
-            w, kv, need = need_gb(m, bits, a.context, a.users)
+            if rule and not F.task_allows(m, rule, bits):
+                continue
+            w, kv, runtime_gb, need = need_gb(m, bits, a.context, a.users, a.kv_bits)
             if need <= usable:
                 out.append({"model": m["Model"], "need_GB": round(need, 1), "tok_s_per_user": round(tps(bw, eff, m, bits, a.users), 1), "evidence": evidence_tag(m)})
         out.sort(key=lambda x: -x["need_GB"])
-        res = {"hardware": label, "usable_GB": round(usable, 1), "bandwidth_GBps": bw, "quant": qname, "context": a.context, "users": a.users, "source": src, "fits": out}
+        res = {"hardware": label, "usable_GB": round(usable, 1), "bandwidth_GBps": bw, "quant": qname, "context": a.context, "users": a.users,
+               "kv_bits": a.kv_bits, "runtime": a.runtime, "runtime_efficiency": eff, "task": a.task, "source": src, "fits": out}
         if a.json:
             print(json.dumps(res, indent=1)); return
-        print(f"{label}: usable {usable:.1f} GB, {bw:g} GB/s  (source: {src})\n{qname}, {a.context} ctx, {a.users} user(s) -> {len(out)} models fit")
+        print(f"{label}: usable {usable:.1f} GB, {bw:g} GB/s, {a.runtime} efficiency {eff:g}  (source: {src})\n{qname}, {a.context} ctx, {a.users} user(s), {a.kv_bits}-bit KV{', ' + a.task if a.task else ''} -> {len(out)} models fit")
         for x in out[:40]:
             flag = "" if x["tok_s_per_user"] >= a.target_tps else "  (slow)"
             print(f"  {x['model']:<40} {x['need_GB']:>7.1f} GB  ~{x['tok_s_per_user']:>6.1f} tok/s{flag}   [{x['evidence']}]")
@@ -120,7 +127,9 @@ def main():
     for k in ("Total params (B)", "Active params (B)", "Layers", "KV heads", "Head dim"):
         if m.get(k) in (None, ""):
             raise SystemExit(f"{m['Model']}: missing {k}; cannot size it")
-    w, kv, need = need_gb(m, bits, a.context, a.users)
+    w, kv, runtime_gb, need = need_gb(m, bits, a.context, a.users, a.kv_bits)
+    floor = F.required_bits(m, rule) if rule else None
+    task_ok = F.task_allows(m, rule, bits) if rule else True
     gpu_hits, cpu_hits = [], []
     for g in gpus:
         if a.vendor and str(g["Vendor"]).lower() != a.vendor.lower():
@@ -131,9 +140,12 @@ def main():
             mem, bw = float(g["Memory (GB)"]), float(g["Bandwidth (GB/s)"])
         except (TypeError, ValueError):
             continue
+        eff = F.gpu_runtime_efficiency(table, a.runtime, g)["efficiency"]
+        if not eff or not task_ok:
+            continue
         for qty in range(1, a.max_cards + 1):
-            if mem * 0.92 * qty >= need:
-                t = tps(bw, eff_for(g["Vendor"]), m, bits, a.users, qty)
+            if F.gpu_usable_gb(mem, qty) >= need:
+                t = tps(bw, eff, m, bits, a.users, qty)
                 gpu_hits.append({"accelerator": g["Accelerator"], "vendor": g["Vendor"], "cards": qty, "memory_GB": mem, "tok_s_per_user": round(t, 1),
                                  "meets_target": t >= a.target_tps, "tdp_W": g.get("TDP / board power (W)"), "evidence": evidence_tag(g), "source": g.get("Source URL")})
                 break
@@ -142,22 +154,26 @@ def main():
             mr, bw = float(c["Max RAM (GB)"]), float(c["Memory BW (GB/s)"])
         except (TypeError, ValueError):
             continue
-        if mr - min(8, 0.25 * mr) >= need:
-            t = tps(bw, 0.55, m, bits, a.users)
+        eff = F.cpu_runtime_efficiency(table, a.runtime, c)
+        if eff and task_ok and F.cpu_usable_gb(mr) >= need:
+            t = tps(bw, eff, m, bits, a.users)
             cpu_hits.append({"cpu": c["CPU / platform"], "max_RAM_GB": mr, "tok_s_per_user": round(t, 1), "meets_target": t >= a.target_tps,
                              "evidence": evidence_tag(c), "source": c.get("Source URL")})
     gpu_hits.sort(key=lambda x: (x["cards"], -x["tok_s_per_user"]))
     cpu_hits.sort(key=lambda x: -x["tok_s_per_user"])
     res = {"model": m["Model"], "hf_repo": m.get("HF repo"), "model_source": m.get("Source URL"), "model_evidence": evidence_tag(m),
-           "quant": qname, "bits_per_weight": bits, "context": a.context, "users": a.users,
-           "weights_GB": round(w, 1), "kv_cache_GB": round(kv, 1), "runtime_GB": RUNTIME_GB, "need_GB": round(need, 1),
+           "quant": qname, "bits_per_weight": bits, "context": a.context, "users": a.users, "kv_bits": a.kv_bits, "runtime": a.runtime,
+           "task": a.task, "task_floor_bits": floor, "meets_task_floor": task_ok,
+           "weights_GB": round(w, 1), "kv_cache_GB": round(kv, 1), "runtime_GB": round(runtime_gb, 1), "need_GB": round(need, 1),
            "gpus_that_fit": gpu_hits, "cpus_that_fit": cpu_hits,
-           "note": "Planning estimates (bandwidth model, FP16 KV cache); validate on target hardware."}
+           "note": f"Planning estimates (bandwidth model, {a.kv_bits}-bit KV cache, {a.runtime}); validate on target hardware."}
     if a.json:
         print(json.dumps(res, indent=1, default=str)); return
     print(f"{m['Model']}  ({m.get('Type')}, {m['Total params (B)']}B total / {m['Active params (B)']}B active, {m['Layers']}L x {m['KV heads']} KV x {m['Head dim']}d)")
     print(f"  source: {m.get('HF repo') or '-'}  [{evidence_tag(m)}]")
-    print(f"  {qname} ({bits} bpw), {a.context} ctx, {a.users} user(s): weights {w:.1f} GB + KV {kv:.1f} GB + runtime {RUNTIME_GB} GB = {need:.1f} GB needed")
+    print(f"  {qname} ({bits} bpw), {a.context} ctx, {a.users} user(s): weights {w:.1f} GB + KV {kv:.1f} GB + runtime {runtime_gb:.1f} GB = {need:.1f} GB needed")
+    if rule and not task_ok:
+        print(f"  {a.task}: needs >= {floor} bits{' and a vision model' if rule['vlm'] and not F.is_vlm(m) else ''}; nothing is listed as fitting at {qname}")
     print(f"\nAccelerators that fit (<= {a.max_cards} card(s)); target {a.target_tps:g} tok/s per user:")
     for x in gpu_hits[:40]:
         print(f"  {'OK ' if x['meets_target'] else 'slow'} {x['accelerator']:<36} x{x['cards']}  {x['memory_GB']:>5g} GB  ~{x['tok_s_per_user']:>6.1f} tok/s  {x['tdp_W']} W  [{x['evidence']}]")
