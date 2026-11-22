@@ -291,7 +291,6 @@ function selectGlobalGpu(gpu, { renderHardware = true } = {}) {
   state.hardwareKind = "gpu";
   byId("preferred-gpu-select").value = gpu.Accelerator;
   byId("hardware-gpu-select").value = gpu.Accelerator;
-  byId("hardware-search").value = gpuDisplayName(gpu.Accelerator);
   syncPreferredGpuMemory(gpu);
   syncHardwareGpuMemory(gpu);
   if (renderHardware) renderHardwareView();
@@ -314,7 +313,6 @@ function refreshCatalogDropdowns() {
   rebuildCatalogSelect("hardware-cpu-select", state.data.cpus, "CPU / platform", cpuCatalogLabel, null, "cpu");
   rebuildCatalogSelect("preferred-gpu-select", state.data.gpus, "Accelerator", gpuCatalogLabel, { text: "No preference — show all GPUs", value: "" }, "gpu");
   rebuildCatalogSelect("hardware-gpu-select", state.data.gpus, "Accelerator", gpuCatalogLabel, null, "gpu");
-  refreshHardwareDropdown();
   for (const id of ["device-vram-input", "hardware-vram-input"]) {
     const select = byId(id);
     const previous = select.value;
@@ -744,12 +742,6 @@ function renderParityAudit() {
   host.innerHTML = `<div class="parity-metrics"><div><strong>${signed(a.memory_delta_pct.median)}</strong><small>Median 8K memory delta</small></div><div><strong>${signed(a.gpu_decode_delta_pct.median)}</strong><small>Median 8K GPU decode delta</small></div><div><strong>${signed(b.gpu_decode_delta_pct.median)}</strong><small>Median 32K GPU decode delta</small></div><div><strong>${signed(b.cpu_decode_delta_pct.median)}</strong><small>Median 32K CPU decode delta</small></div></div><p class="parity-caption">Positive means the app is higher. At 8K, median deltas are ${signed(a.memory_delta_pct.median)} memory, ${signed(a.gpu_decode_delta_pct.median)} GPU decode, and ${signed(a.cpu_decode_delta_pct.median)} CPU decode. At 32K they are ${signed(b.memory_delta_pct.median)} memory, ${signed(b.gpu_decode_delta_pct.median)} GPU decode, and ${signed(b.cpu_decode_delta_pct.median)} CPU decode. The remaining speed gap comes from Excel charging the whole KV allocation into the per-token traffic denominator.</p>`;
 }
 
-function hardwarePool() {
-  const gpus = state.data.gpus.map((row) => ({ raw: row, kind: "gpu", name: gpuDisplayName(row.Accelerator), value: row.Accelerator }));
-  const cpus = state.data.cpus.map((row) => ({ row, raw: row, kind: "cpu", name: row["CPU / platform"] }));
-  return [...gpus, ...cpus];
-}
-
 function hardwareMemory(item) {
   if (item.kind === "gpu") {
     const raw = state.hardwareVram > 0 ? state.hardwareVram : Number(item.raw["Memory (GB)"]);
@@ -781,32 +773,6 @@ function hardwareSpeed(item, model) {
   state.runtime = oldRuntime;
   return eff * hardwareBandwidth(item) / denominator / state.hardwareUsers;
 }
-
-function setHardware(item) {
-  if (item.kind === "gpu") {
-    selectGlobalGpu(item.raw, { renderHardware: false });
-  } else {
-    selectGlobalCpu(item.raw, { renderHardware: false });
-    state.hardware = item.raw;
-    state.hardwareKind = "cpu";
-  }
-  byId("hardware-search").value = item.name;
-  renderHardwareView();
-}
-
-function refreshHardwareDropdown() {
-  const select = byId("hardware-search");
-  const previous = select.value;
-  const rows = hardwarePool().filter((item) => !state.intelOnly || isIntelHardware(item.raw, item.kind));
-  select.replaceChildren();
-  for (const item of rows) {
-    const label = item.kind === "gpu" ? `GPU · ${gpuCatalogLabel(item.raw)}` : `CPU · ${cpuCatalogLabel(item.raw)}`;
-    select.add(new Option(label, item.name));
-  }
-  select.value = rows.some((item) => item.name === previous) ? previous : rows.some((item) => item.name === state.hardware?.Accelerator || item.name === state.hardware?.["CPU / platform"]) ? (state.hardware.Accelerator || state.hardware["CPU / platform"]) : rows[0]?.name || "";
-}
-function showHardwareSearch() { refreshHardwareDropdown(); }
-function closeHardwareSearch() {}
 
 function currentHardwareItem() {
   return { raw: state.hardware, kind: state.hardwareKind, name: state.hardwareKind === "gpu" ? gpuDisplayName(state.hardware.Accelerator) : state.hardware["CPU / platform"] };
@@ -908,13 +874,13 @@ function populateFilterOptions() {
     target.add(option);
   }
   refreshCatalogDropdowns();
-  const defaultHardware = hardwarePool().find((item) => item.name === "Intel Arc Pro B60") || hardwarePool()[0];
+  const defaultGpu = state.data.gpus.find((row) => row.Accelerator === "Intel Arc Pro B60") || state.data.gpus[0];
   const defaultCpu = state.data.cpus.find((row) => row["CPU / platform"] === "Core Ultra 9 285K") || state.data.cpus[0];
   state.hardwareCpu = defaultCpu;
   state.hardwareRam = Number(defaultCpu["Max RAM (GB)"]);
   byId("hardware-cpu-select").value = defaultCpu["CPU / platform"];
   syncHardwareCpuMemory(defaultCpu);
-  setHardware(defaultHardware);
+  selectGlobalGpu(defaultGpu, { renderHardware: false });
   selectGlobalGpu(null, { renderHardware: false });
   refreshModelDropdown();
 }
@@ -1229,10 +1195,6 @@ function bindEvents() {
   byId("min-memory-filter").addEventListener("change", (event) => { state.minMemory = Number(event.target.value); render(); });
   byId("max-power-filter").addEventListener("change", (event) => { state.maxPower = Number(event.target.value); render(); });
 
-  byId("hardware-search").addEventListener("change", (event) => {
-    const item = hardwarePool().find((entry) => entry.name === event.target.value);
-    if (item) setHardware(item);
-  });
   byId("hardware-quant-select").addEventListener("change", (event) => { state.hardwareBits = Number(event.target.selectedOptions[0].dataset.bits); renderHardwareView(); });
   byId("hardware-context-select").addEventListener("change", (event) => { state.hardwareContext = Number(event.target.value); renderHardwareView(); });
   byId("hardware-user-select").addEventListener("change", (event) => { state.hardwareUsers = Number(event.target.value); renderHardwareView(); });

@@ -188,8 +188,7 @@ h1 { max-width: 700px; margin: 0; font-size: 12px; line-height: 1; font-weight: 
 .empty-state p { color: var(--muted); margin: 0; }
 .table-note { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; margin: 16px 0 0; }
 .table-note svg { width: 14px; height: 14px; }
-.hardware-controls { grid-template-columns: 2fr 1fr .8fr .6fr .8fr; }
-.hardware-search-control { position: relative; }
+.hardware-controls { grid-template-columns: 1.2fr 1fr .8fr .8fr; }
 .hardware-summary { margin-top: 24px; padding: 26px 28px; background: var(--ink); color: white; display: grid; grid-template-columns: 1.3fr repeat(3, .7fr); gap: 20px; align-items: end; }
 .hardware-summary h2 { margin: 4px 0 0; font-size: clamp(23px, 3vw, 38px); }
 .hardware-summary .metric span { color: var(--lime); }
@@ -345,7 +344,7 @@ dialog p:not(.section-label) { line-height: 1.55; color: var(--muted); }
 @media (max-width: 1050px) {
   .workspace { width: min(calc(100% - 28px), 1500px); padding-top: 38px; }
   .control-strip { grid-template-columns: 2fr 1fr 1fr; }
-  .hardware-controls { grid-template-columns: 2fr 1fr 1fr; }
+  .hardware-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .profile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .site-header { gap: 12px; }
   .header-nav { gap: 0; }
