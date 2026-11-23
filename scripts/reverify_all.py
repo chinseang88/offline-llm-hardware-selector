@@ -40,7 +40,8 @@ SCRIPTS = ROOT / "scripts"
 JS_FILES = ("formulas.js", "theme.js", "pipeline.js", "app.js", "selftest.js")
 GROUPS = ("Data tables", "Cross-references", "Published build", "Page wiring", "Themes", "Formulas", "Python = browser", "Online")
 SHEET_TABLES = {"Models": ("models", "Model"), "GPUs": ("gpus", "Accelerator"), "CPUs": ("cpus", "CPU / platform"),
-                "Voice Models": ("voice_models", "Model"), "Quant": ("quant", "Quantization"), "Reference Models": ("reference_models", "Model")}
+                "Voice Models": ("voice_models", "Model"), "Quant": ("quant", "Quantization"), "Reference Models": ("reference_models", "Model"),
+                "Compute": ("compute", "Item")}
 REQUIRED = {
     "models": ["Model", "Vendor", "Total params (B)", "Active params (B)", "Layers", "KV heads", "Head dim", "Max context", "Type", "License",
                "HF repo", "Year", "Runtime arch", "Source URL", "Evidence status"],
@@ -52,6 +53,7 @@ REQUIRED = {
     "libraries": ["Library", *F.HW_CLASSES, "Typical eff.", "Vulkan fallback eff.", "Min CUDA compute capability"],
     "arch_support": ["Arch key"],
     "task_rules": ["Task", "Base min bits (4-30B)", "Small model <4B min bits", "Large model >=30B min bits", "VLM required?"],
+    "compute": ["Sheet", "Item", "TFLOPS (est.)", "Basis", "Evidence status"],
     "evidence": ["Sheet", "Item", "Parameter", "Status", "Source URL"],
 }
 PRIVATE_MARKERS = re.compile(r"Intel Confidential|Intel Top Secret|sharepoint\.com|\.ith\.intel\.com|hsdes\.intel\.com|speed\.intel\.com|goto\.intel\.com", re.I)
@@ -128,6 +130,17 @@ def check_data(report, tables):
     arch_values = {value for row in tables["arch_support"] for key, value in row.items() if key not in ("Arch key", "Models (examples)", "Notes")}
     report.check(group, "arch support cells are Y, P or N", arch_values <= {"Y", "P", "N"}, sorted(arch_values))
 
+    compute = tables["compute"]
+    compute_keys = collections.Counter((row["Sheet"], row["Item"]) for row in compute)
+    report.check(group, "compute.csv sheet + item pairs are unique", all(count == 1 for count in compute_keys.values()), sample(k for k, c in compute_keys.items() if c > 1))
+    bad_compute = [row["Item"] for row in compute if not (0 < F.positive(row["TFLOPS (est.)"]) < 100000) or row["Sheet"] not in ("GPUs", "CPUs")]
+    report.check(group, "compute estimates are positive numbers for GPUs or CPUs", not bad_compute, sample(bad_compute))
+    unlabelled = [row["Item"] for row in compute if row["Evidence status"] != "DERIVED/ESTIMATE"]
+    report.check(group, "compute estimates are all labelled as estimates", not unlabelled, sample(unlabelled))
+    planning = {row[key] for name, key in (("gpus", "Accelerator"), ("cpus", "CPU / platform")) for row in tables[name] if PLANNING.search(row.get("Evidence status", ""))}
+    leaked = sorted({row["Item"] for row in compute} & planning)
+    report.check(group, "no compute estimate is published for pre-release planning hardware", not leaked, sample(leaked))
+
     for name, key in (("models", "Model"), ("gpus", "Accelerator"), ("cpus", "CPU / platform")):
         rows = tables[name]
         no_status = [row[key] for row in rows if not row.get("Evidence status", "").strip()]
@@ -163,8 +176,15 @@ def check_references(report, tables):
         names = {row[key] for row in tables[table]}
         items = {row["Item"] for row in evidence if row["Sheet"] == sheet}
         report.check(group, f"evidence for {sheet} points at existing rows", items <= names, sample(sorted(items - names)))
-        if sheet in ("Models", "GPUs", "CPUs"):
+        if sheet in ("Models", "GPUs", "CPUs", "Compute"):
             report.check(group, f"every {sheet} row has at least one evidence record", names <= items, sample(sorted(names - items)))
+    for sheet, name, key in (("GPUs", "gpus", "Accelerator"), ("CPUs", "cpus", "CPU / platform")):
+        known = {row[key] for row in tables[name]}
+        orphans = sorted(row["Item"] for row in tables["compute"] if row["Sheet"] == sheet and row["Item"] not in known)
+        report.check(group, f"compute estimates for {sheet} point at existing rows", not orphans, sample(orphans))
+        released = {row[key] for row in tables[name] if not PLANNING.search(row.get("Evidence status", ""))}
+        uncovered = sorted(released - {row["Item"] for row in tables["compute"] if row["Sheet"] == sheet})
+        report.check(group, f"every released {sheet} row has a compute estimate for time to first token", not uncovered, sample(uncovered))
     unknown_sheets = {row["Sheet"] for row in evidence} - set(SHEET_TABLES) - {"NVMe Storage"}
     report.check(group, "evidence sheets are all known tables", not unknown_sheets, sorted(unknown_sheets))
 
@@ -207,7 +227,7 @@ def check_references(report, tables):
     if stale:
         report.review(group, "CPU generation labels in app.js for CPUs no longer in the table", sample(stale))
     table_options = set(re.findall(r'<option value="([A-Za-z]+)">', re.search(r'<select id="database-select">(.+?)</select>', html, re.S).group(1)))
-    payload_keys = {"models", "gpus", "cpus", "quants", "voiceModels", "libraries", "archSupport", "taskRules", "referenceModels"}
+    payload_keys = {"models", "gpus", "cpus", "quants", "voiceModels", "libraries", "archSupport", "taskRules", "compute", "referenceModels"}
     report.check(group, "database page lists exactly the published tables", table_options == payload_keys, f"page {sorted(table_options)} vs data {sorted(payload_keys)}")
 
 
@@ -224,10 +244,10 @@ def check_build(report):
     report.check(group, "docs/parity.json matches the current formulas", parity == json.loads(json.dumps(calculate())), "Run python scripts/build_web_data.py")
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     report.check(group, ".gitignore excludes private reference data, workbooks and scratch output",
-                 all(line in ignore for line in ("docs/private_reference.json", "*.xlsx", "out/")))
+                 all(line in ignore for line in ("docs/private_reference.json", "docs/private_compute.json", "*.xlsx", "out/")))
     if shutil.which("git"):
         tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.splitlines()
-        private = [path for path in tracked if path.endswith((".xlsx", ".xlsm")) or path.startswith("out/") or path == "docs/private_reference.json"]
+        private = [path for path in tracked if path.endswith((".xlsx", ".xlsm")) or path.startswith("out/") or path in ("docs/private_reference.json", "docs/private_compute.json")]
         report.check(group, "no private or scratch file is tracked by git", not private, sample(private))
     else:
         report.review(group, "git not found", "could not confirm that private files are untracked")
@@ -361,7 +381,7 @@ def workbook_pipeline_case():
 
 def run_pipeline(args):
     return F.pipeline_fit(args["memoryGb"], args["bandwidthGbps"], args["utilization"], args["voice"], args["llms"], args["quantity"],
-                          args["headroomPct"], args["kvBits"], args["activity"])
+                          args["headroomPct"], args["kvBits"], args["activity"], args.get("tflops", 0), args.get("promptTokens", 0), args.get("mfu"))
 
 
 def check_formulas(report, tables):
@@ -455,6 +475,37 @@ def check_formulas(report, tables):
     unused = run_pipeline(dict(args, llms=[args["llms"][0], {"model": None}]))
     report.check(group, "pipeline: unused slots are skipped", unused["llmsUsed"] == 1 and unused["llms"][1]["status"] == "UNUSED")
 
+    # Time to first token (workbook Power sheet: F8 GFLOPs per token, F18 GPU prefill, F29 CPU prefill, G18 TTFT).
+    near("prefill = 0.35 x TFLOPS x 1000 / (2 x active params)", F.prefill_tok_per_second(32.8, 100), 0.35 * 100 * 1000 / (2 * 32.8))
+    near("prefill: each extra card adds 80%", F.prefill_tok_per_second(32.8, 100, 2), 1.8 * F.prefill_tok_per_second(32.8, 100))
+    near("prefill: concurrent users share the compute", F.prefill_tok_per_second(32.8, 100, 1, 4), F.prefill_tok_per_second(32.8, 100) / 4)
+    near("prefill on CPU uses the 0.6 factor", F.prefill_tok_per_second(32.8, 7.2, 1, 1, True), 0.35 * 0.6 * 7.2 * 1000 / (2 * 32.8))
+    near("prefill MFU can be overridden", F.prefill_tok_per_second(10, 100, mfu=0.5), 0.5 * 100 * 1000 / 20)
+    near("prefill is zero without a compute figure", F.prefill_tok_per_second(32.8, 0), 0)
+    near("TTFT = prompt / prefill + 1 / decode", F.time_to_first_token(2048, 533.5365853658536, 11.0), 2048 / 533.5365853658536 + 1 / 11.0)
+    report.check(group, "TTFT is unknown without a prefill or decode rate", F.time_to_first_token(2048, 0, 11) is None and F.time_to_first_token(2048, 500, 0) is None)
+    near("prefill with CPU offload runs the two shares in series", F.split_prefill_tok_per_second(0.5, 400, 20), 1 / (0.5 / 400 + 0.5 / 20))
+
+    # Concurrent sets of Stage 1-4: each set carries its own model copies (workbook Concurrent Model Selector B20, B22, B23).
+    report.check(group, "sets: workbook example fits 2 sets by memory and 0 by bandwidth", (got["setsByMemory"], got["setsByBandwidth"], got["sets"], got["setsLimit"]) == (2, 0, 0, "bandwidth"),
+                 (got["setsByMemory"], got["setsByBandwidth"], got["sets"], got["setsLimit"]))
+    near("sets: memory per set is voice reserve plus every LLM", got["setMemoryGb"], 58.754411444)
+    near("sets: bandwidth per set is voice plus every LLM", got["setBwGbps"], 1205.68)
+    three = run_pipeline(dict(args, llms=args["llms"][:3], tflops=100, promptTokens=2048))
+    report.check(group, "sets: three LLMs fit 3 sets by memory and 1 by bandwidth", (three["setsByMemory"], three["setsByBandwidth"], three["sets"], three["setsLimit"]) == (3, 1, 1, "bandwidth"),
+                 (three["setsByMemory"], three["setsByBandwidth"], three["sets"]))
+    half = run_pipeline(dict(args, llms=[dict(slot, target=10) for slot in args["llms"][:3]], tflops=100, promptTokens=2048))
+    report.check(group, "sets: a lower speed target lets bandwidth carry more sets", half["setsByBandwidth"] == 5 and half["sets"] == 3 and half["setsLimit"] == "memory", (half["setsByMemory"], half["setsByBandwidth"]))
+    one_at_a_time = run_pipeline(dict(args, activity="sequential", tflops=100, promptTokens=2048))
+    report.check(group, "sets: one-at-a-time counts only the largest LLM's bandwidth", (one_at_a_time["setsByMemory"], one_at_a_time["setsByBandwidth"], one_at_a_time["sets"]) == (2, 1, 1))
+    report.check(group, "sets: no answer while an input needs review", over["sets"] is None and over["setsLimit"] is None)
+    first = three["llms"][0]
+    near("pipeline TTFT alone = prompt / prefill + 1 / own speed", first["ttftAlone"], 2048 / (0.35 * 100 * 1000 / 8) + 1 / first["tokAlone"])
+    near("pipeline TTFT with every set busy shares the prefill compute", first["ttftLoaded"], 2048 / (0.35 * 100 * 1000 / 8 / 3) + 1 / 40)
+    near("pipeline TTFT reports the slowest LLM", three["ttftWorstLoaded"], max(row["ttftLoaded"] for row in three["llms"]))
+    near("pipeline TTFT one-at-a-time does not share prefill inside a set", one_at_a_time["llms"][0]["ttftLoaded"], 2048 / (0.35 * 100 * 1000 / 8) + 1 / 40)
+    report.check(group, "pipeline TTFT is unknown without a compute figure", got["ttftWorstLoaded"] is None and got["llms"][0]["ttftAlone"] is None)
+
     catalog = load_rows("models")
     sized = [m for m in catalog if F.has_sizing_specs(m)]
     bad = [m["Model"] for m in sized if not (0 < F.memory_need(m, 4.85, 8192)["total"] < 5000)]
@@ -471,11 +522,13 @@ def flag(value):
 def flatten_pipeline(result):
     out = [result["usableGb"], result["effectiveBwGbps"], result["voiceWeightsGb"], result["voiceExtraGb"], result["voiceMemoryGb"], result["voiceBwGbps"],
            result["voicePending"], result["memoryUsedGb"], result["memoryMarginGb"], result["bwRequiredGbps"], result["llmsUsed"], result["llmsFit"],
-           flag(result["allFit"]), result["verdict"]]
+           flag(result["allFit"]), result["verdict"],
+           result["setMemoryGb"], result["setBwGbps"], result["setsByMemory"], result["setsByBandwidth"], result["sets"], result["setsLimit"], result["ttftWorstLoaded"]]
     for row in result["voice"]:
         out += [row["placement"], row["weightsGb"], row["extraGb"], row["bwGbps"], row["status"]]
     for row in result["llms"]:
-        out += [row["status"], row["weights"], row["kvOverhead"], row["total"], row["bwNeeded"], row["cumulativeMemory"], row["cumulativeBw"], flag(row["fitsAlone"]), row["tokAlone"]]
+        out += [row["status"], row["weights"], row["kvOverhead"], row["total"], row["bwNeeded"], row["cumulativeMemory"], row["cumulativeBw"], flag(row["fitsAlone"]), row["tokAlone"],
+                row["target"], row["prefillAlone"], row["ttftAlone"], row["ttftLoaded"]]
     return out
 
 
@@ -494,6 +547,12 @@ def py_run(case, table, rules):
         return [F.excel_decode_tok_per_second(a["model"], a["bits"], a["context"], a["efficiency"], a["bandwidth"], a["users"], a["quantity"], a["kvBits"])]
     if fn == "splitDecodeTokPerSecond":
         return [F.split_decode_tok_per_second(a["perTokenGb"], a["gpuShare"], a["gpuRate"], a["cpuRate"], a["users"])]
+    if fn == "prefillTokPerSecond":
+        return [F.prefill_tok_per_second(a["activeParamsB"], a["tflops"], a.get("quantity", 1), a.get("users", 1), a.get("cpu", False), a.get("mfu"))]
+    if fn == "splitPrefillTokPerSecond":
+        return [F.split_prefill_tok_per_second(a["gpuShare"], a["gpuRate"], a["cpuRate"])]
+    if fn == "timeToFirstToken":
+        return [F.time_to_first_token(a["promptTokens"], a["prefillTokPerSecond"], a["decodeTokPerSecond"])]
     if fn == "gpuUsableGb":
         return [F.gpu_usable_gb(a["memoryGb"], a["quantity"], a.get("headroomPct"))]
     if fn == "cpuUsableGb":
@@ -528,10 +587,16 @@ def py_run(case, table, rules):
 def build_cases():
     models, gpus, cpus = load_rows("models"), load_rows("gpus"), load_rows("cpus")
     libraries, task_rows, voice = load_rows("libraries"), load_rows("task_rules"), load_rows("voice_models")
+    compute = {(row["Sheet"], row["Item"]): row["TFLOPS (est.)"] for row in load_rows("compute")}
     quants = [q["Bits/weight (eff.)"] for q in load_rows("quant")]
     cases = []
     add = lambda fn, **args: cases.append({"fn": fn, "args": args})
-    for m in models:
+    for index, m in enumerate(models):
+        gpu, cpu = gpus[index % len(gpus)], cpus[index % len(cpus)]
+        gpu_tflops, cpu_tflops = compute.get(("GPUs", gpu["Accelerator"]), 0), compute.get(("CPUs", cpu["CPU / platform"]), 0)
+        add("prefillTokPerSecond", activeParamsB=m["Active params (B)"], tflops=gpu_tflops, quantity=1 + index % 4, users=1 + index % 3)
+        add("prefillTokPerSecond", activeParamsB=m["Active params (B)"], tflops=cpu_tflops, cpu=True, users=2, mfu=0.25)
+        add("timeToFirstToken", promptTokens=2048, prefillTokPerSecond=F.prefill_tok_per_second(m["Active params (B)"], gpu_tflops), decodeTokPerSecond=3.5 + index)
         add("hasSizingSpecs", model=m)
         add("kvPerTokenGb", model=m, kvBits=16)
         for bits, context, users, kv in ((4.85, 8192, 1, 8), (8.5, 32768, 4, 16), (3, 262144, 2, 4)):
@@ -565,6 +630,10 @@ def build_cases():
     for share in (0, 0.25, 0.5, 0.999, 1):
         add("splitDecodeTokPerSecond", perTokenGb=4.2, gpuShare=share, gpuRate=228, cpuRate=49.5, users=2)
     add("splitDecodeTokPerSecond", perTokenGb=4.2, gpuShare=0.5, gpuRate=228, cpuRate=0, users=1)
+    for share in (0, 0.4, 1):
+        add("splitPrefillTokPerSecond", gpuShare=share, gpuRate=533.5, cpuRate=23.05)
+    add("timeToFirstToken", promptTokens=8192, prefillTokPerSecond=0, decodeTokPerSecond=20)
+    add("timeToFirstToken", promptTokens=8192, prefillTokPerSecond=500, decodeTokPerSecond=None)
     add("gpuRuntimeEfficiency", runtime="not a runtime", gpu=gpus[0])
     add("requiredBits", model=models[0], task="not a task", bits=4.85)
     for row in voice:
@@ -572,6 +641,9 @@ def build_cases():
     args, _ = workbook_pipeline_case()
     sized = [m for m in models if F.has_sizing_specs(m)]
     add("pipelineFit", **args)
+    add("pipelineFit", **dict(args, tflops=200, promptTokens=2048))
+    add("pipelineFit", **dict(args, llms=args["llms"][:3], tflops=98, promptTokens=8192, mfu=0.5))
+    add("pipelineFit", **dict(args, activity="sequential", quantity=2, kvBits=8, headroomPct=5, tflops=117, promptTokens=512))
     add("pipelineFit", **dict(args, activity="sequential", quantity=2, kvBits=8, headroomPct=5))
     add("pipelineFit", **dict(args, memoryGb=24, bandwidthGbps=456, utilization=0.5))
     add("pipelineFit", **dict(args, utilization=0))
@@ -579,7 +651,7 @@ def build_cases():
                               llms=[{"model": sized[0], "bits": 4.85, "context": 262144, "target": 20}, {"model": None, "bits": 4.85, "context": 8192, "target": 20},
                                     {"model": sized[-1], "bits": 0, "context": 8192, "target": 20}, {"model": sized[len(sized) // 2], "bits": 8.5, "context": 4096, "target": 5}]))
     for index in range(0, len(sized) - 3, 4):
-        add("pipelineFit", **dict(args, llms=[{"model": m, "bits": 4.85, "context": 8192, "target": 20} for m in sized[index:index + 4]]))
+        add("pipelineFit", **dict(args, tflops=40 + index, promptTokens=2048, llms=[{"model": m, "bits": 4.85, "context": 8192, "target": 20} for m in sized[index:index + 4]]))
     return {"libraries": libraries, "taskRules": task_rows, "cases": cases}
 
 
@@ -603,7 +675,8 @@ def check_parity(report):
         return 0
     answer = json.loads(run.stdout)
     constants = answer["constants"]
-    for name in ("WEIGHT_MARGIN", "RUNTIME_SHARE", "DEFAULT_HEADROOM_PCT", "EXTRA_CARD_SCALE", "HOST_RESERVE_GB", "VOICE_EXTRA_GB", "VOICE_BW_GBPS"):
+    for name in ("WEIGHT_MARGIN", "RUNTIME_SHARE", "DEFAULT_HEADROOM_PCT", "EXTRA_CARD_SCALE", "HOST_RESERVE_GB", "VOICE_EXTRA_GB", "VOICE_BW_GBPS",
+                 "PREFILL_MFU", "CPU_PREFILL_FACTOR", "PREFILL_GFLOPS_PER_B"):
         report.check(group, f"constant {name} is identical", constants[name] == getattr(F, name), f"js {constants[name]} vs py {getattr(F, name)}")
     report.check(group, "CPU-offload runtime list is identical", constants["OFFLOAD_RUNTIMES"] == list(F.OFFLOAD_RUNTIMES))
     report.check(group, "hardware class list is identical", constants["HW_CLASSES"] == list(F.HW_CLASSES))

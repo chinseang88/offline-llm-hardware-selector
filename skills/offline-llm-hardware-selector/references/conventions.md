@@ -18,6 +18,9 @@ One implementation, two mirrors: `docs/formulas.js` (web app) and `scripts/formu
 | Decode tok/s per user | `eff × bandwidth_GBps × (1 + 0.8 × (cards − 1)) / (active_params_B × bits / 8) / users` |
 | Decode with offload | `1 / (bytes_per_token × (gpu_share / gpu_rate + cpu_share / cpu_rate)) / users`, `gpu_share = gpu_usable / memory_needed`, `rate = eff × bandwidth` |
 | Efficiency `eff` | `data/libraries.csv` cell for the runtime and the hardware's `Runtime HW class` (leading number). NVIDIA below the runtime's minimum CUDA compute capability, or AMD without ROCm, falls back to `Vulkan fallback eff.`; a dash means the runtime does not run there |
+| Prefill tok/s | `0.35 × TFLOPS × (1 + 0.8 × (cards − 1)) × 1000 / (2 × active_params_B) / users` on a GPU; `0.35 × 0.6 × TFLOPS × 1000 / (2 × active_params_B) / users` on a CPU (workbook Power sheet: MFU 0.35, 2 GFLOPs per billion active params). With CPU offload the two shares run in series, as for decode |
+| Time to first token (s) | `prompt_tokens / prefill_tok_s + 1 / decode_tok_s`. Unknown when the row has no compute estimate |
+| Compute `TFLOPS` | `data/compute.csv`: planning estimates without a vendor source (`DERIVED/ESTIMATE`). Pre-release planning rows are never published; they load from the ignored `docs/private_compute.json` when present |
 | Task floor | `data/task_rules.csv`: minimum bits by size band (<4B, 4–30B, ≥30B); a vision task also needs a VLM. A model below the floor is not counted as fitting |
 | Runtime can load model | `data/arch_support.csv` cell for the model's `Runtime arch`: `N` blocks, `P` warns |
 
@@ -30,7 +33,7 @@ One implementation, two mirrors: `docs/formulas.js` (web app) and `scripts/formu
 
 The app is lower on memory for small models (no 1 GB runtime floor) and higher on speed (the workbook adds the whole KV allocation to the bytes read per token). `scripts/selector_parity.py` reports the size of both differences.
 
-### Workbook "Multi-Stage Pipeline Fit" (Pipeline page)
+### Workbook "Multi-Stage Pipeline Fit" and "Concurrent Model Selector" (Multi-LLM page)
 
 | Quantity | Formula |
 |---|---|
@@ -40,6 +43,10 @@ The app is lower on memory for small models (no 1 GB runtime floor) and higher o
 | LLM slot memory | `total × bits / 8 × 1.03 + KV cache (1 user, KV bits selectable, FP16 in the workbook) + 0.07 × weights` |
 | LLM slot bandwidth | `active × bits / 8 × 1.03 × target tok/s` |
 | Fit | slots are added in order on top of the voice reserve: `NO - GPU MEMORY` when the running memory passes usable, else `NO - BANDWIDTH` when running bandwidth passes effective (sum of slots when all answer at once, the largest slot when one at a time) |
+| One set | Stage 1 VAD + Stage 2 diarization + Stage 3 ASR + the Stage 4 LLMs, each set with its own loaded copy of every model. Memory per set = voice reserve + every LLM slot; bandwidth per set = voice bandwidth + LLM bandwidth |
+| Concurrent sets | `min(floor(usable memory / memory per set), floor(effective bandwidth / bandwidth per set))`; no answer while an input needs review. Serving several sets from one shared copy of the weights would allow more and is not modelled |
+| First token, alone | `prompt_tokens / prefill_tok_s + 1 / (bandwidth left after voice / bytes per token)` |
+| First token, every set busy | the LLMs that answer together (`sets × LLMs`, or `sets` when one at a time) share the prefill compute; each decodes at its target: `prompt_tokens / (prefill_tok_s / together) + 1 / target`. Voice-stage latency is not modelled |
 
 These are planning estimates (memory-bandwidth bound decode, no prefill, no speculative decoding). Always say so.
 

@@ -53,6 +53,9 @@
     else note("Start-up: icon library", "The icon CDN did not load, so icons are not drawn. Layout and behaviour are unaffected.");
     check("Start-up: verification panel rendered", byId("verification-content").textContent.trim().length > 0);
     check("Start-up: formula audit rendered", byId("parity-audit-content").textContent.includes("%"));
+    check("Start-up: the pipeline tab is named Multi-LLM", document.querySelector('.nav-page[data-page="pipeline"]').textContent.trim() === "Multi-LLM");
+    check("Start-up: compute estimates loaded for first-token time", data.compute.length > 0 && app.tflopsFor("GPUs", "Intel Arc Pro B60") > 0);
+    check("Start-up: method section explains time to first token and concurrent sets", /Time to first token/.test(byId("method").textContent) && /Concurrent sets/.test(byId("method").textContent));
   });
 
   // ------------------------------------------------------ model -> hardware
@@ -171,6 +174,28 @@
 
     const summary = await app.copySummary();
     check("Model page: copy summary names the model and memory", summary.includes("Qwen3 32B") && summary.includes("GB"));
+    check("Model page: copy summary includes the fastest first token", /Fastest first token/.test(summary));
+
+    const timedRow = () => gpuRows().find((row) => row.value === "RTX 5090");
+    const base5090 = timedRow();
+    const expected = state.promptTokens / MF.prefillTokPerSecond({ activeParamsB: state.model["Active params (B)"], tflops: app.tflopsFor("GPUs", "RTX 5090") }) + 1 / base5090.speed;
+    check("Model page: first-token time = prompt / prefill + 1 / decode", base5090.ttft !== null && near(base5090.ttft, expected, 1e-9), `${base5090.ttft} vs ${expected}`);
+    check("Model page: each hardware row shows a first-token line", all("#results .result-row").every((row) => /First token/.test(row.querySelector(".speed-cell").textContent)));
+    check("Model page: summary reports the fastest and median first token", /Fastest/.test(byId("ttft-summary").textContent) && /Median/.test(byId("ttft-summary").textContent));
+    check("Model page: rows without a compute figure show no first-token time", gpuRows().every((row) => app.tflopsFor("GPUs", row.value) > 0 || row.ttft === null));
+    set("prompt-length-input", 8192);
+    check("Model page: a longer prompt raises first-token time", timedRow().ttft > base5090.ttft * 3);
+    set("prompt-length-input", 2048);
+    set("user-select", 4);
+    check("Model page: concurrent users raise first-token time", timedRow().ttft > base5090.ttft * 3.9);
+    set("user-select", 1);
+    set("gpu-quantity-input", 2);
+    check("Model page: a second card lowers first-token time", timedRow().ttft < base5090.ttft);
+    set("gpu-quantity-input", 1);
+    set("hardware-sort", "ttft-asc");
+    const quickest = gpuRows().filter((row) => row.fits && row.ttft !== null).sort((a, b) => a.ttft - b.ttft)[0];
+    check("Model page: sorting by first token puts the fastest row first", byId("results").querySelector(".hardware-name strong").textContent === quickest.name);
+    set("hardware-sort", "speed-desc");
 
     byId("show-model-evidence").click();
     check("Model page: Know more opens the detail drawer", byId("evidence-drawer").classList.contains("open") && byId("drawer-title").textContent === "Qwen3 32B");
@@ -193,6 +218,23 @@
     const card = data.gpus.find((row) => row.Accelerator === "Intel Arc Pro B60");
     check("Hardware page: usable memory is VRAM less 8% headroom", near(metric(0), MF.gpuUsableGb(card["Memory (GB)"], 1, 8)), metric(0));
     check("Hardware page: compatible models are listed", shown("hardware-model-results") > 0 && metric(2) > 0);
+    const modelRows = () => app.compatibleModels(app.currentHardwareItem());
+    const tflops = app.tflopsFor("GPUs", "Intel Arc Pro B60");
+    check("Hardware page: summary shows the compute estimate behind first-token time", near(metric(3), tflops) && /TFLOPS/.test(all("#hardware-summary .metric span")[3].textContent));
+    const firstModel = modelRows()[0];
+    const expectedFirst = 2048 / MF.prefillTokPerSecond({ activeParamsB: firstModel.model["Active params (B)"], tflops }) + 1 / firstModel.speed;
+    check("Hardware page: first-token time = prompt / prefill + 1 / decode", near(firstModel.ttft, expectedFirst, 1e-9), `${firstModel.ttft} vs ${expectedFirst}`);
+    check("Hardware page: every model that fits has a first-token time", modelRows().every((row) => row.ttft !== null) && all("#hardware-model-results .result-row").every((row) => /First token \d/.test(row.querySelector(".speed-cell").textContent)));
+    set("hardware-prompt-input", 8192);
+    check("Hardware page: a longer prompt raises first-token time", modelRows().find((row) => row.model === firstModel.model).ttft > firstModel.ttft * 3);
+    set("hardware-prompt-input", 2048);
+    set("hardware-user-select", 4);
+    check("Hardware page: concurrent users raise first-token time", modelRows().find((row) => row.model === firstModel.model).ttft > firstModel.ttft * 3.9);
+    set("hardware-user-select", 1);
+    set("model-sort", "ttft-asc");
+    const quickestModel = [...modelRows()].sort((a, b) => a.ttft - b.ttft)[0];
+    check("Hardware page: sorting by first token puts the fastest model first", near(modelRows()[0].ttft, quickestModel.ttft, 1e-12));
+    set("model-sort", "speed-desc");
     set("hardware-gpu-quantity-input", 2);
     check("Hardware page: two cards double usable memory", near(metric(0), MF.gpuUsableGb(card["Memory (GB)"], 2, 8)));
     set("hardware-gpu-quantity-input", 1);
@@ -249,56 +291,77 @@
     byId("close-drawer").click();
   });
 
-  // ------------------------------------------------------------- pipeline
-  await section("Pipeline page", async () => {
+  // ------------------------------------------------------------ multi-llm
+  await section("Multi-LLM page", async () => {
     app.showPage("pipeline");
     let result = pipeline.reset();
     const gpu = data.gpus.find((row) => row.Accelerator === pipeline.state.gpu);
-    check("Pipeline page: page is visible with three voice stages and four LLM slots", !byId("pipeline-page").hidden && all("#pipe-voice-table tbody tr").length === 3 && all("#pipe-llm-table tbody tr").length === 4);
-    check("Pipeline page: usable memory is accelerator memory less headroom", near(result.usableGb, gpu["Memory (GB)"] * 0.9, 1e-6));
-    check("Pipeline page: running totals end at the memory used", near(result.llms[result.llms.length - 1].cumulativeMemory, result.memoryUsedGb, 1e-9));
-    check("Pipeline page: voice stages reserve memory before any LLM", result.voiceMemoryGb > 0 && result.llms[0].cumulativeMemory > result.voiceMemoryGb);
-    const simultaneous = result.bwRequiredGbps;
+    const stageCards = () => all("#pipe-stage-cards .stage-card");
+    const answer = () => byId("pipeline-summary").textContent;
+    const change = (host, selector, value) => { const element = byId(host).querySelector(selector); element.value = value; element.dispatchEvent(new Event("change", { bubbles: true })); };
+    const expectedSets = (r) => Math.min(Math.floor(r.usableGb / r.setMemoryGb + 1e-9), Math.floor(r.effectiveBwGbps / r.setBwGbps + 1e-9));
+    check("Multi-LLM page: Stages 1 to 3 each have a card and Stage 4 has four LLM slots", !byId("pipeline-page").hidden && stageCards().length === 3 && all("#pipe-llm-table tbody tr").length === 4);
+    check("Multi-LLM page: stages are numbered 1 to 4 in order", stageCards().map((card) => card.querySelector(".section-label").textContent).join(",") === "Stage 1,Stage 2,Stage 3" && byId("pipe-llm-table").closest(".pipeline-card").querySelector(".section-label").textContent === "Stage 4");
+    check("Multi-LLM page: the answer comes after all four stages", Boolean(byId("pipe-llm-table").compareDocumentPosition(byId("pipeline-summary")) & Node.DOCUMENT_POSITION_FOLLOWING) && /^Answer/.test(answer()));
+    check("Multi-LLM page: usable memory is accelerator memory less headroom", near(result.usableGb, gpu["Memory (GB)"] * 0.9, 1e-6));
+    check("Multi-LLM page: one set is Stages 1 to 3 plus every LLM", near(result.setMemoryGb, result.voiceMemoryGb + result.llms.reduce((sum, row) => sum + row.total, 0), 1e-9));
+    check("Multi-LLM page: sets = the smaller of the memory and bandwidth limits", result.sets === expectedSets(result) && result.sets === Math.min(result.setsByMemory, result.setsByBandwidth));
+    check("Multi-LLM page: the default stages give at least one concurrent set", result.sets >= 1 && answer().includes(`${result.sets} set`) && /concurrently/.test(answer()));
+    const baseSets = result.sets;
+    const baseSetMemory = result.setMemoryGb;
+    const simultaneous = result.setsByBandwidth;
     set("pipe-activity-select", "sequential");
-    result = pipeline.compute();
-    check("Pipeline page: one-at-a-time needs less bandwidth", result.bwRequiredGbps < simultaneous);
+    check("Multi-LLM page: one-at-a-time lets bandwidth carry at least as many sets", pipeline.compute().setsByBandwidth >= simultaneous && pipeline.compute().bwRequiredGbps < result.bwRequiredGbps);
     set("pipe-activity-select", "simultaneous");
-    const used = pipeline.compute().memoryUsedGb;
     set("pipe-kv-select", 8);
-    check("Pipeline page: 8-bit KV uses less memory than FP16", pipeline.compute().memoryUsedGb < used);
+    check("Multi-LLM page: 8-bit KV makes each set smaller than FP16", pipeline.compute().setMemoryGb < baseSetMemory);
     set("pipe-kv-select", 16);
     set("pipe-qty-select", 2);
-    check("Pipeline page: two accelerators double usable memory", near(pipeline.compute().usableGb, gpu["Memory (GB)"] * 2 * 0.9, 1e-6));
+    check("Multi-LLM page: two accelerators at least double the sets by memory", near(pipeline.compute().usableGb, gpu["Memory (GB)"] * 2 * 0.9, 1e-6) && pipeline.compute().setsByMemory >= result.setsByMemory * 2);
     set("pipe-qty-select", 1);
     set("pipe-headroom-select", 0);
-    check("Pipeline page: zero headroom uses all memory", near(pipeline.compute().usableGb, gpu["Memory (GB)"], 1e-6));
+    check("Multi-LLM page: zero headroom uses all memory", near(pipeline.compute().usableGb, gpu["Memory (GB)"], 1e-6));
     set("pipe-headroom-select", 10);
     set("pipe-bw-util-select", "0.8");
-    check("Pipeline page: bandwidth use can be fixed by hand", near(pipeline.compute().effectiveBwGbps, gpu["Bandwidth (GB/s)"] * 0.8, 1e-6));
+    check("Multi-LLM page: bandwidth use can be fixed by hand", near(pipeline.compute().effectiveBwGbps, gpu["Bandwidth (GB/s)"] * 0.8, 1e-6));
     set("pipe-bw-util-select", "auto");
     set("pipe-runtime-select", "MLX / mlx-lm");
-    check("Pipeline page: an unsupported runtime asks for review", /REVIEW/.test(pipeline.compute().verdict));
+    check("Multi-LLM page: an unsupported runtime gives no answer and says why", pipeline.compute().sets === null && /No answer yet/.test(answer()) && /REVIEW/.test(answer()));
     set("pipe-runtime-select", "llama.cpp");
 
-    const slot = byId("pipe-llm-table").querySelector('[data-llm="3"][data-field="model"]');
-    slot.value = "";
-    slot.dispatchEvent(new Event("change", { bubbles: true }));
-    check("Pipeline page: an unused slot is skipped", pipeline.compute().llmsUsed === 3 && /UNUSED/.test(all("#pipe-llm-table tbody tr")[3].textContent));
-    const placement = byId("pipe-voice-table").querySelector('[data-voice="2"][data-field="placement"]');
+    change("pipe-llm-table", '[data-llm="0"][data-field="target"]', "400");
+    check("Multi-LLM page: a speed target the bandwidth cannot carry gives zero sets", pipeline.compute().sets === 0 && pipeline.compute().setsLimit === "bandwidth" && /No complete set/.test(answer()));
+    change("pipe-llm-table", '[data-llm="0"][data-field="target"]', "20");
+    change("pipe-llm-table", '[data-llm="3"][data-field="model"]', "");
+    check("Multi-LLM page: an unused LLM slot is skipped and allows at least as many sets", pipeline.compute().llmsUsed === 3 && pipeline.compute().sets >= baseSets && /UNUSED/.test(all("#pipe-llm-table tbody tr")[3].textContent));
     const voiceBefore = pipeline.compute().voiceMemoryGb;
-    placement.value = "CPU";
-    placement.dispatchEvent(new Event("change", { bubbles: true }));
-    check("Pipeline page: a voice stage moved to CPU frees GPU memory", pipeline.compute().voiceMemoryGb < voiceBefore);
-    const manual = byId("pipe-voice-table").querySelector('[data-voice="0"][data-field="manual"]');
-    manual.value = "0.002";
-    manual.dispatchEvent(new Event("change", { bubbles: true }));
-    check("Pipeline page: a measured weight replaces a pending one", pipeline.compute().voice[0].status === "INPUTS SET");
+    change("pipe-stage-cards", '[data-voice="2"][data-field="placement"]', "CPU");
+    check("Multi-LLM page: a voice stage moved to CPU frees GPU memory in every set", pipeline.compute().voiceMemoryGb < voiceBefore);
+    change("pipe-stage-cards", '[data-voice="0"][data-field="manual"]', "0.002");
+    check("Multi-LLM page: a measured weight replaces a pending one", pipeline.compute().voice[0].status === "INPUTS SET");
+    change("pipe-stage-cards", '[data-voice="1"][data-field="model"]', "");
+    check("Multi-LLM page: a stage that is not used is named in the answer", /Diarization not used/.test(answer()) && /NOT USED/.test(stageCards()[1].textContent));
     const smallest = [...data.gpus].filter((row) => Number(row["Memory (GB)"]) > 0).sort((a, b) => a["Memory (GB)"] - b["Memory (GB)"])[0];
     set("pipe-gpu-select", smallest.Accelerator);
-    check("Pipeline page: a small accelerator reports the memory shortfall", pipeline.compute().llms.some((row) => row.status === "NO - GPU MEMORY"));
+    check("Multi-LLM page: a small accelerator fits no set and names memory as the limit", pipeline.compute().sets === 0 && pipeline.compute().setsByMemory === 0 && pipeline.compute().llms.some((row) => row.status === "NO - GPU MEMORY"));
     byId("pipe-reset").click();
-    check("Pipeline page: Reset restores the defaults", pipeline.state.gpu === gpu.Accelerator && pipeline.compute().llmsUsed === 4);
-    check("Pipeline page: summary and badges are filled", byId("pipeline-summary").textContent.length > 40 && byId("pipe-llm-badge").textContent !== "—" && byId("pipe-voice-badge").textContent !== "—");
+    check("Multi-LLM page: Reset restores the defaults", pipeline.state.gpu === gpu.Accelerator && pipeline.compute().llmsUsed === 4 && pipeline.compute().sets === baseSets);
+    check("Multi-LLM page: answer and Stage 4 badge are filled", answer().length > 60 && byId("pipe-llm-badge").textContent !== "—");
+
+    if (app.tflopsFor("GPUs", gpu.Accelerator)) check("Multi-LLM page: default accelerator reports time to first token", pipeline.compute().ttftWorstLoaded !== null && /time to first token with every set busy/.test(answer()));
+    else check("Multi-LLM page: a pre-release accelerator says its compute figure is not public", pipeline.compute().ttftWorstLoaded === null && /no public compute figure/.test(answer()));
+    set("pipe-gpu-select", "H200 NVL 141GB");
+    result = pipeline.compute();
+    const tflops = app.tflopsFor("GPUs", "H200 NVL 141GB");
+    const slotOne = data.models.find((row) => row.Model === pipeline.state.llms[0].model);
+    const prefill = MF.prefillTokPerSecond({ activeParamsB: slotOne["Active params (B)"], tflops });
+    check("Multi-LLM page: first token alone = prompt / prefill + 1 / own speed", near(result.llms[0].ttftAlone, 2048 / prefill + 1 / result.llms[0].tokAlone, 1e-9));
+    check("Multi-LLM page: with every set busy the LLMs share the prefill compute", result.sets >= 1 && near(result.llms[0].ttftLoaded, 2048 / (prefill / (result.sets * result.llmsUsed)) + 1 / 20, 1e-9));
+    check("Multi-LLM page: the answer reports the slowest first token", near(result.ttftWorstLoaded, Math.max(...result.llms.map((row) => row.ttftLoaded)), 1e-12) && /time to first token with every set busy/.test(answer()));
+    check("Multi-LLM page: Stage 4 lists a first-token time for every LLM", all("#pipe-llm-table tbody tr").every((row) => /\d s/.test(row.children[9].textContent) && /\d s/.test(row.children[10].textContent)));
+    set("pipe-prompt-select", 8192);
+    check("Multi-LLM page: a longer prompt raises first-token time", pipeline.compute().llms[0].ttftAlone > result.llms[0].ttftAlone * 3);
+    byId("pipe-reset").click();
   });
 
   // -------------------------------------------------------------- database
@@ -344,6 +407,8 @@
     all(".status-filter").find((button) => button.dataset.status === "all").click();
     const sheets = all("option", byId("evidence-sheet-filter")).map((option) => option.value);
     check("Evidence page: table filter lists the evidence tables", sheets.includes("Models") && sheets.includes("GPUs") && sheets.includes("CPUs"));
+    set("evidence-sheet-filter", "Compute");
+    check("Evidence page: compute estimates behind first-token time are logged as estimates", entries().length > 0 && entries().every((entry) => entry.querySelector(".status-pill").textContent === "DERIVED/ESTIMATE"));
     set("evidence-sheet-filter", "GPUs");
     check("Evidence page: table filter keeps one table", entries().length > 0 && entries().every((entry) => entry.querySelector("code").textContent.endsWith("GPUs")));
     set("evidence-sheet-filter", "all");
@@ -381,6 +446,7 @@
     check("Know more page: an empty glossary result explains itself", terms() === 0 && !document.querySelector(".knowledge-glossary .empty-state").hidden);
     set("glossary-search", "");
     check("Know more page: clearing the filter restores every term", terms() === everyTerm);
+    check("Know more page: time to first token is explained in the guide and the glossary", all(".knowledge-glossary dt").some((term) => /Time to first token/.test(term.textContent)) && all(".learning-formula").some((formula) => /time to first token/.test(formula.textContent)));
     all(".knowledge-nav button").find((tab) => tab.dataset.knowledgePage === "evidence").click();
     document.querySelector('[data-open-page="evidence"]').click();
     check("Know more page: Open evidence ledger goes to the Evidence page", state.page === "evidence" && !byId("evidence-page").hidden);
@@ -458,6 +524,8 @@
         check(`${name} theme: ${page} page text is readable (${candidates.length} elements)`, low.size === 0, [...low.values()].slice(0, 8).join(" | "));
         if (borderline) note(`${name} theme: ${page} page`, `${borderline} of ${candidates.length} text elements sit between 3:1 and 4.5:1 contrast`);
         check(`${name} theme: ${page} page does not scroll sideways`, document.documentElement.scrollWidth <= window.innerWidth + 1, `${document.documentElement.scrollWidth} > ${window.innerWidth}`);
+        // Narrower than any phone (for example a small editor preview pane): layout is not judged.
+        if (window.innerWidth < 300) continue;
         const cut = scope.flatMap((host) => all("*", host)).filter((element) => element.getClientRects().length && element.getBoundingClientRect().right > window.innerWidth + 1 && !element.closest(".pipeline-table-wrap, .data-table-wrap, .header-nav, .knowledge-nav, [hidden]"));
         check(`${name} theme: ${page} page has nothing cut off at ${window.innerWidth}px wide`, cut.length === 0, cut.slice(0, 4).map(describe).join(" | "));
       }

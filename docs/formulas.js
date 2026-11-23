@@ -13,6 +13,9 @@
   const HOST_RESERVE_GB = 8;
   const VOICE_EXTRA_GB = 5;
   const VOICE_BW_GBPS = 5;
+  const PREFILL_MFU = 0.35;
+  const CPU_PREFILL_FACTOR = 0.6;
+  const PREFILL_GFLOPS_PER_B = 2;
   const OFFLOAD_RUNTIMES = ["llama.cpp", "Ollama", "LM Studio", "IPEX-LLM"];
   const HW_CLASSES = ["NVIDIA GPU", "AMD GPU", "Intel GPU / iGPU", "NPU (Intel/AMD)", "Apple Silicon", "x86 CPU", "ARM CPU", "Jetson (ARM+GPU)", "Qualcomm / Rockchip NPU"];
   const VENDOR_CLASS = { NVIDIA: "NVIDIA GPU", AMD: "AMD GPU", Intel: "Intel GPU / iGPU", Apple: "Apple Silicon" };
@@ -109,6 +112,32 @@
     if ((share > 0 && !gpuRate) || (share < 1 && !cpuRate)) return 0;
     const seconds = perToken * ((share > 0 ? share / gpuRate : 0) + (share < 1 ? (1 - share) / cpuRate : 0));
     return seconds > 0 ? 1 / seconds / (positive(o.users) || 1) : 0;
+  }
+
+  // Workbook Power sheet: prefill is compute-bound. tok/s = MFU x TFLOPS x 1000 / (2 GFLOPs per billion active params).
+  function prefillTokPerSecond(options) {
+    const o = options || {};
+    const gflops = PREFILL_GFLOPS_PER_B * positive(o.activeParamsB);
+    const tflops = positive(o.tflops);
+    if (!gflops || !tflops) return 0;
+    const mfu = o.mfu === undefined || o.mfu === null ? PREFILL_MFU : positive(o.mfu);
+    const scale = o.cpu ? CPU_PREFILL_FACTOR : quantityScale(o.quantity);
+    return mfu * tflops * scale * 1000 / gflops / (positive(o.users) || 1);
+  }
+
+  // Overflow layers on the CPU run in series with the GPU share, as for decode.
+  function splitPrefillTokPerSecond(options) {
+    const o = options || {};
+    return splitDecodeTokPerSecond({ perTokenGb: 1, gpuShare: o.gpuShare, gpuRate: o.gpuRate, cpuRate: o.cpuRate, users: 1 });
+  }
+
+  // Workbook Power sheet: TTFT = prompt tokens / prefill tok/s + 1 / decode tok/s. Null when either rate is unknown.
+  function timeToFirstToken(options) {
+    const o = options || {};
+    const prefill = positive(o.prefillTokPerSecond);
+    const decode = positive(o.decodeTokPerSecond);
+    if (!prefill || !decode) return null;
+    return positive(o.promptTokens) / prefill + 1 / decode;
   }
 
   function isUnifiedMemory(gpu) {
@@ -227,6 +256,7 @@
   }
 
   // Workbook "Multi-Stage Pipeline Fit": voice stages reserve first, then LLM slots are checked cumulatively.
+  // One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
   function pipelineFit(input) {
     const o = input || {};
     const quantity = Math.max(1, positive(o.quantity) || 1);
@@ -234,6 +264,8 @@
     const usable = positive(o.memoryGb) * quantity * (1 - headroom / 100);
     const effectiveBw = positive(o.bandwidthGbps) * quantityScale(quantity) * positive(o.utilization);
     const kvBits = positive(o.kvBits) || 16;
+    const sequential = o.activity === "sequential";
+    const promptTokens = positive(o.promptTokens);
 
     let voiceWeights = 0;
     let voiceExtra = 0;
@@ -260,7 +292,7 @@
     let used = 0;
     const llms = (o.llms || []).map((slot, index) => {
       const model = slot.model;
-      if (!model) return { slot: index + 1, model: null, status: "UNUSED", weights: 0, kvOverhead: 0, total: 0, bwNeeded: 0, cumulativeMemory: memory, cumulativeBw: voiceBw + (o.activity === "sequential" ? bwMax : bwSum), fitsAlone: null, tokAlone: null };
+      if (!model) return { slot: index + 1, model: null, status: "UNUSED", weights: 0, kvOverhead: 0, total: 0, bwNeeded: 0, cumulativeMemory: memory, cumulativeBw: voiceBw + (sequential ? bwMax : bwSum), fitsAlone: null, tokAlone: null, target: 0, prefillAlone: null, ttftAlone: null, ttftLoaded: null };
       used += 1;
       const bits = positive(slot.bits);
       const context = positive(slot.context);
@@ -273,7 +305,7 @@
       memory += total;
       bwSum += bwNeeded;
       bwMax = Math.max(bwMax, bwNeeded);
-      const cumulativeBw = voiceBw + (o.activity === "sequential" ? bwMax : bwSum);
+      const cumulativeBw = voiceBw + (sequential ? bwMax : bwSum);
       const limit = positive(model["Max context"]);
       let status = "FITS";
       if (!bits || !context || !target) status = "REVIEW: CHECK INPUTS";
@@ -283,31 +315,54 @@
       else if (cumulativeBw > effectiveBw) status = "NO - BANDWIDTH";
       const review = status.startsWith("REVIEW");
       if (status === "FITS") fits += 1;
+      const tokAlone = review || !perToken ? null : Math.max(0, effectiveBw - voiceBw) / perToken;
+      const prefillAlone = review ? null : prefillTokPerSecond({ activeParamsB: model["Active params (B)"], tflops: o.tflops, quantity, mfu: o.mfu }) || null;
       return {
         slot: index + 1, model: model.Model, status, weights, kvOverhead, total, bwNeeded,
         cumulativeMemory: memory, cumulativeBw,
         fitsAlone: review ? null : voiceMemory + total <= usable,
-        tokAlone: review || !perToken ? null : Math.max(0, effectiveBw - voiceBw) / perToken,
+        tokAlone, target, prefillAlone,
+        ttftAlone: timeToFirstToken({ promptTokens, prefillTokPerSecond: prefillAlone, decodeTokPerSecond: tokAlone }),
+        ttftLoaded: null,
       };
     });
-    const bwRequired = voiceBw + (o.activity === "sequential" ? bwMax : bwSum);
+    const bwRequired = voiceBw + (sequential ? bwMax : bwSum);
     const reviews = llms.filter((row) => row.status.startsWith("REVIEW")).length;
     let verdict = "INPUTS SET";
     if (usable <= 0 || effectiveBw <= 0) verdict = "REVIEW: select accelerator, quantity, headroom and utilization";
     else if (reviews) verdict = "REVIEW: fix LLM inputs";
+
+    // Concurrent sets: every set needs its own memory and bandwidth; the smaller limit wins.
+    const countable = verdict === "INPUTS SET" && memory > 0;
+    const setsByMemory = countable ? Math.floor(usable / memory + 1e-9) : null;
+    const setsByBandwidth = countable && bwRequired > 0 ? Math.floor(effectiveBw / bwRequired + 1e-9) : null;
+    const sets = !countable ? null : setsByBandwidth === null ? setsByMemory : Math.min(setsByMemory, setsByBandwidth);
+    const setsLimit = sets === null ? null : setsByBandwidth === null || setsByMemory < setsByBandwidth ? "memory" : setsByBandwidth < setsByMemory ? "bandwidth" : "memory and bandwidth";
+
+    // First token with every set busy: all LLMs that answer together share the prefill compute; each still decodes at its target.
+    const together = sets ? sets * (sequential ? 1 : Math.max(1, used)) : 0;
+    let ttftWorst = null;
+    for (const row of llms) {
+      if (!together || !row.prefillAlone) continue;
+      row.ttftLoaded = timeToFirstToken({ promptTokens, prefillTokPerSecond: row.prefillAlone / together, decodeTokPerSecond: row.target });
+      if (row.ttftLoaded !== null && (ttftWorst === null || row.ttftLoaded > ttftWorst)) ttftWorst = row.ttftLoaded;
+    }
     return {
       usableGb: usable, effectiveBwGbps: effectiveBw, voice, voiceWeightsGb: voiceWeights, voiceExtraGb: voiceExtra,
       voiceMemoryGb: voiceMemory, voiceBwGbps: voiceBw, voicePending: pending, llms,
       memoryUsedGb: memory, memoryMarginGb: usable - memory, bwRequiredGbps: bwRequired,
       llmsUsed: used, llmsFit: fits, allFit: verdict === "INPUTS SET" && used > 0 && fits === used, verdict,
+      setMemoryGb: memory, setBwGbps: bwRequired, setsByMemory, setsByBandwidth, sets, setsLimit, ttftWorstLoaded: ttftWorst,
     };
   }
 
   return {
     WEIGHT_MARGIN, RUNTIME_SHARE, DEFAULT_HEADROOM_PCT, EXTRA_CARD_SCALE, HOST_RESERVE_GB, VOICE_EXTRA_GB, VOICE_BW_GBPS,
+    PREFILL_MFU, CPU_PREFILL_FACTOR, PREFILL_GFLOPS_PER_B,
     OFFLOAD_RUNTIMES, HW_CLASSES, DEFAULT_TASK_RULES,
     hasSizingSpecs, kvPerTokenGb, memoryNeed, excelMemoryNeed, quantityScale, excelQuantityScale,
     decodeTokPerSecond, excelDecodeTokPerSecond, splitDecodeTokPerSecond, isUnifiedMemory,
+    prefillTokPerSecond, splitPrefillTokPerSecond, timeToFirstToken,
     gpuUsableGb, cpuUsableGb, offloadSupported, hostOffloadGb,
     parseEfficiency, buildEfficiencyTable, hardwareClass, gpuRuntimeEfficiency, cpuRuntimeEfficiency,
     buildTaskRules, taskRule, requiredBits, isVlm, taskAllows, voiceWeightsGb, pipelineFit,

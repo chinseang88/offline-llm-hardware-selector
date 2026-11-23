@@ -13,8 +13,9 @@ function pipeline(result) {
   return [
     result.usableGb, result.effectiveBwGbps, result.voiceWeightsGb, result.voiceExtraGb, result.voiceMemoryGb, result.voiceBwGbps, result.voicePending,
     result.memoryUsedGb, result.memoryMarginGb, result.bwRequiredGbps, result.llmsUsed, result.llmsFit, flag(result.allFit), result.verdict,
+    result.setMemoryGb, result.setBwGbps, result.setsByMemory, result.setsByBandwidth, result.sets, result.setsLimit, result.ttftWorstLoaded,
     ...result.voice.flatMap((row) => [row.placement, row.weightsGb, row.extraGb, row.bwGbps, row.status]),
-    ...result.llms.flatMap((row) => [row.status, row.weights, row.kvOverhead, row.total, row.bwNeeded, row.cumulativeMemory, row.cumulativeBw, flag(row.fitsAlone), row.tokAlone]),
+    ...result.llms.flatMap((row) => [row.status, row.weights, row.kvOverhead, row.total, row.bwNeeded, row.cumulativeMemory, row.cumulativeBw, flag(row.fitsAlone), row.tokAlone, row.target, row.prefillAlone, row.ttftAlone, row.ttftLoaded]),
   ];
 }
 
@@ -28,6 +29,9 @@ function run(testCase) {
     case "decodeTokPerSecond": return [MF.decodeTokPerSecond(a)];
     case "excelDecodeTokPerSecond": return [MF.excelDecodeTokPerSecond(a.model, a)];
     case "splitDecodeTokPerSecond": return [MF.splitDecodeTokPerSecond(a)];
+    case "prefillTokPerSecond": return [MF.prefillTokPerSecond(a)];
+    case "splitPrefillTokPerSecond": return [MF.splitPrefillTokPerSecond(a)];
+    case "timeToFirstToken": return [MF.timeToFirstToken(a)];
     case "gpuUsableGb": return [MF.gpuUsableGb(a.memoryGb, a.quantity, a.headroomPct)];
     case "cpuUsableGb": return [MF.cpuUsableGb(a.ramGb)];
     case "hostOffloadGb": return [MF.hostOffloadGb(a.ramGb, a.platformMaxGb)];
@@ -49,6 +53,7 @@ process.stdout.write(JSON.stringify({
   constants: {
     WEIGHT_MARGIN: MF.WEIGHT_MARGIN, RUNTIME_SHARE: MF.RUNTIME_SHARE, DEFAULT_HEADROOM_PCT: MF.DEFAULT_HEADROOM_PCT,
     EXTRA_CARD_SCALE: MF.EXTRA_CARD_SCALE, HOST_RESERVE_GB: MF.HOST_RESERVE_GB, VOICE_EXTRA_GB: MF.VOICE_EXTRA_GB, VOICE_BW_GBPS: MF.VOICE_BW_GBPS,
+    PREFILL_MFU: MF.PREFILL_MFU, CPU_PREFILL_FACTOR: MF.CPU_PREFILL_FACTOR, PREFILL_GFLOPS_PER_B: MF.PREFILL_GFLOPS_PER_B,
     OFFLOAD_RUNTIMES: MF.OFFLOAD_RUNTIMES, HW_CLASSES: MF.HW_CLASSES, DEFAULT_TASK_RULES: MF.DEFAULT_TASK_RULES,
   },
   results: input.cases.map(run),

@@ -45,6 +45,7 @@ def build_payload():
         "libraries": load_rows("libraries") if (ROOT / "data" / "libraries.csv").exists() else [],
         "archSupport": load_rows("arch_support") if (ROOT / "data" / "arch_support.csv").exists() else [],
         "taskRules": load_rows("task_rules"),
+        "compute": load_rows("compute"),
         "referenceModels": load_rows("reference_models"),
         "evidence": evidence,
         "factsByItem": source_facts(evidence),

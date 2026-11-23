@@ -11,7 +11,7 @@ for p in (OUT, CACHE):
 NUMERIC = {"Total params (B)", "Active params (B)", "Layers", "KV heads", "Head dim", "Max context", "Year",
            "Memory (GB)", "Bandwidth (GB/s)", "TDP / board power (W)", "CUDA compute capability",
            "Cores", "Base / default power (W)", "Max turbo / max power (W)", "Memory BW (GB/s)", "Max RAM (GB)", "CPU PCIe lanes",
-           "Bits / weight", "Bits/weight (eff.)", "GB per 1B params"}
+           "Bits / weight", "Bits/weight (eff.)", "GB per 1B params", "TFLOPS (est.)"}
 
 def _coerce(k, v):
     if v is None or v == "":

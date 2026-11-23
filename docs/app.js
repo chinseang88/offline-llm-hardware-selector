@@ -64,6 +64,12 @@ const cleanNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const decimal = new Intl.NumberFormat("en", { maximumFractionDigits: 1, minimumFractionDigits: 0 });
 
+function formatSeconds(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  if (value >= 100) return `${Math.round(value).toLocaleString()} s`;
+  return `${value.toFixed(value >= 10 ? 1 : 2)} s`;
+}
+
 function iconize() {
   if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 1.7 } });
 }
@@ -108,6 +114,37 @@ const DATABASE_PAGE = 500;
 const EVIDENCE_PAGE = 300;
 let efficiencyTable = {};
 let taskRules = MF.buildTaskRules([]);
+let computeByItem = new Map();
+
+// Compute estimate (TFLOPS) behind the first-token time; 0 when none is published for the row.
+function tflopsFor(sheet, name) {
+  return computeByItem.get(`${sheet}|${name}`) || 0;
+}
+
+function isPlanningRow(row) {
+  return /Pre-release planning/i.test(String(row?.["Evidence status"] || ""));
+}
+
+// Prefill tok/s for a model on one row of hardware; layers offloaded to the host CPU run in series with the GPU share.
+function prefillRate(model, { gpu = null, cpu = null, quantity = 1, users = 1, gpuShare = null }) {
+  const activeParamsB = model["Active params (B)"];
+  const cpuRate = cpu ? MF.prefillTokPerSecond({ activeParamsB, tflops: tflopsFor("CPUs", cpu["CPU / platform"]), cpu: true, users }) : 0;
+  if (!gpu) return cpuRate;
+  const gpuRate = MF.prefillTokPerSecond({ activeParamsB, tflops: tflopsFor("GPUs", gpu.Accelerator), quantity, users });
+  return gpuShare === null ? gpuRate : MF.splitPrefillTokPerSecond({ gpuShare, gpuRate, cpuRate });
+}
+
+function firstTokenText(ttft, hardware, kind) {
+  if (ttft !== null) return `First token ${formatSeconds(ttft)}`;
+  const known = tflopsFor(kind === "cpu" ? "CPUs" : "GPUs", kind === "cpu" ? hardware["CPU / platform"] : hardware.Accelerator);
+  if (known) return "First token: not available";
+  return isPlanningRow(hardware) ? "First token: no public compute figure" : "First token: no compute estimate";
+}
+
+function compareFirstToken(a, b) {
+  if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1;
+  return a - b;
+}
 
 function kvPerTokenGb(model, bits = state.kvBits) {
   return MF.kvPerTokenGb(model, bits);
@@ -389,6 +426,7 @@ function hardwareRows() {
       .map((row) => {
         const memory = cpuUsable(row);
         const blocker = blockerFor(efficiency(row, true) > 0, memory >= need);
+        const speed = tokPerSecond(row, state.model, true);
         return {
           raw: row,
           name: row["CPU / platform"],
@@ -398,7 +436,8 @@ function hardwareRows() {
           physicalMemory: Number(row["Max RAM (GB)"]),
           bandwidth: Number(row["Memory BW (GB/s)"]),
           power: row["Max turbo / max power (W)"],
-          speed: tokPerSecond(row, state.model, true),
+          speed,
+          ttft: MF.timeToFirstToken({ promptTokens: state.promptTokens, prefillTokPerSecond: prefillRate(state.model, { cpu: row, users: state.users }), decodeTokPerSecond: speed }),
           fits: !blocker,
           blocker,
           gpuShare: null,
@@ -423,6 +462,9 @@ function hardwareRows() {
       const offloaded = hostPool > 0 && need > gpuPool;
       const blocker = blockerFor(backend.efficiency > 0, gpuPool + hostPool >= need);
       const gpuRate = backend.efficiency * Number(row["Bandwidth (GB/s)"]) * MF.quantityScale(state.gpuQuantity);
+      const gpuShare = offloaded ? gpuPool / need : null;
+      const speed = offloaded ? splitSpeed(state.model, state.bits, state.users, need, gpuPool, gpuRate, state.hostCpu, state.runtime) : tokPerSecond(row, state.model, false);
+      const prefill = prefillRate(state.model, { gpu: row, cpu: offloaded ? state.hostCpu : null, quantity: state.gpuQuantity, users: state.users, gpuShare });
       return {
         raw: row,
         name: gpuDisplayName(row.Accelerator),
@@ -433,10 +475,11 @@ function hardwareRows() {
         physicalMemory: Number(row["Memory (GB)"]),
         bandwidth: Number(row["Bandwidth (GB/s)"]),
         power: row["TDP / board power (W)"],
-        speed: offloaded ? splitSpeed(state.model, state.bits, state.users, need, gpuPool, gpuRate, state.hostCpu, state.runtime) : tokPerSecond(row, state.model, false),
+        speed,
+        ttft: MF.timeToFirstToken({ promptTokens: state.promptTokens, prefillTokPerSecond: prefill, decodeTokPerSecond: speed }),
         fits: !blocker,
         blocker,
-        gpuShare: offloaded ? gpuPool / need : null,
+        gpuShare,
         evidence: row["Evidence status"],
         source: row["Source URL"],
         kind: "gpu",
@@ -472,6 +515,7 @@ function hardwareComparator(a, b) {
   else if (mode === "vendor-asc") primary = String(a.vendor).localeCompare(String(b.vendor));
   else if (mode === "evidence-desc") primary = evidenceScore(b.evidence) - evidenceScore(a.evidence);
   else if (mode === "evidence-asc") primary = evidenceScore(a.evidence) - evidenceScore(b.evidence);
+  else if (mode === "ttft-asc") primary = compareFirstToken(a.ttft, b.ttft);
   else if (mode === "speed-asc") primary = compareNumber(a.speed, b.speed, "asc");
   else primary = compareNumber(a.speed, b.speed, "desc");
   if (primary) return primary;
@@ -531,6 +575,10 @@ function renderSummary() {
   const minBits = requiredBits(state.model);
   byId("profile-note").innerHTML = `<strong>${escapeHtml(state.task)}</strong> requires ≥ ${minBits} bits for this model. Selected quant is ${state.bits} bits${state.bits < minBits ? ' <span class="warning">— below the task-safe floor.</span>' : ' — meets the task-safe floor.'} ${state.offload === "Y" && state.hostCpu ? `Host offload pool: ${decimal.format(hostOffloadGb())} GB from ${escapeHtml(state.hostCpu["CPU / platform"])}.` : ""} Response at target: ~${decimal.format(state.answerTokens / state.target)} s after prefill; prompt/context use ${decimal.format(state.promptTokens / state.context * 100)}%.`;
   byId("memory-parity").innerHTML = `<span><b>Excel fit estimate</b> ${decimal.format(excel.total)} GB</span><span><b>Web estimate</b> ${decimal.format(need.total)} GB</span><span class="${Math.abs(parityDelta) > 2 ? "delta-hot" : ""}"><b>Delta</b> ${parityDelta >= 0 ? "+" : ""}${decimal.format(parityDelta)}%</span>`;
+  const fitting = hardwareRows().filter((row) => row.fits);
+  const timed = fitting.filter((row) => row.ttft !== null).sort((a, b) => a.ttft - b.ttft);
+  const kindLabel = state.view === "cpus" ? "CPUs" : "GPUs";
+  byId("ttft-summary").innerHTML = `<span><b>Time to first token</b> ${state.promptTokens.toLocaleString()}-token prompt, ${state.users} user${state.users > 1 ? "s" : ""}</span>${timed.length ? `<span><b>Fastest</b> ${formatSeconds(timed[0].ttft)} on ${escapeHtml(timed[0].name)}</span><span><b>Median</b> ${formatSeconds(timed[Math.floor(timed.length / 2)].ttft)} across ${timed.length} ${kindLabel} that fit</span>` : `<span>No ${kindLabel} that fit have a compute figure</span>`}${fitting.length > timed.length ? `<span>${fitting.length - timed.length} that fit have no public compute figure</span>` : ""}`;
   renderWarnings("model-warnings", modelWarnings());
 }
 
@@ -611,7 +659,7 @@ function renderRows() {
         <div class="fit-bar ${row.memory >= need ? "" : "over"}"><span style="width:${bar}%"></span></div>
         <div class="fit-copy">Need <strong>${decimal.format(need)} GB</strong> from ${decimal.format(row.physicalMemory)} GB ${row.kind === "gpu" ? "device memory" : "system RAM"}${row.gpuShare === null ? "" : ` · ${Math.round(row.gpuShare * 100)}% on GPU, rest on host RAM`}</div>
       </div>
-      <div class="speed-cell"><strong class="${speedClass}">${decimal.format(row.speed)}</strong><small>tok/s web · ${speedLabel}</small><small>Excel ${decimal.format(excelSpeed)} tok/s</small><small class="delta">${speedDelta >= 0 ? "+" : ""}${decimal.format(speedDelta)}% web vs Excel</small></div>
+      <div class="speed-cell"><strong class="${speedClass}">${decimal.format(row.speed)}</strong><small>tok/s web · ${speedLabel}</small><small>${escapeHtml(firstTokenText(row.ttft, row.raw, row.kind))}</small><small>Excel ${decimal.format(excelSpeed)} tok/s</small><small class="delta">${speedDelta >= 0 ? "+" : ""}${decimal.format(speedDelta)}% web vs Excel</small></div>
       <div class="power-cell">${row.power ?? "—"} W</div>
       <div class="evidence-cell"><span class="status-pill ${evidenceLevel}">${evidenceShort(row.evidence)}</span><button class="row-detail" aria-label="Fact check ${escapeHtml(row.name)}" title="Fact check"><i data-lucide="arrow-up-right"></i></button></div>`;
     item.querySelector(".row-detail").addEventListener("click", () => openEvidence(row.raw, row.kind));
@@ -871,6 +919,7 @@ function modelComparator(a, b) {
   else if (mode === "architecture-desc") primary = String(b.model["Runtime arch"]).localeCompare(String(a.model["Runtime arch"]));
   else if (mode === "evidence-desc") primary = evidenceScore(b.model["Evidence status"]) - evidenceScore(a.model["Evidence status"]);
   else if (mode === "evidence-asc") primary = evidenceScore(a.model["Evidence status"]) - evidenceScore(b.model["Evidence status"]);
+  else if (mode === "ttft-asc") primary = compareFirstToken(a.ttft, b.ttft);
   else if (mode === "speed-asc") primary = compareNumber(a.speed, b.speed, "asc");
   else primary = compareNumber(a.speed, b.speed, "desc");
   if (primary) return primary;
@@ -882,6 +931,10 @@ function compatibleModels(item, { ignoreShowFilter = false } = {}) {
   const filter = ignoreShowFilter ? "all" : byId("hardware-model-filter").value;
   const supported = efficiency(item.raw, item.kind === "cpu", state.hardwareRuntime) > 0;
   const rule = MF.taskRule(taskRules, state.hardwareTask);
+  const cpuKind = item.kind === "cpu";
+  const gpuPool = cpuKind ? 0 : hardwareGpuPool(item);
+  const hostPool = cpuKind ? 0 : hardwareHostPool(item);
+  const promptTokens = Number(byId("hardware-prompt-input").value);
   return state.data.models
     .filter((model) => model["Active params (B)"] != null && model.Layers != null && model["KV heads"] != null && model["Head dim"] != null)
     .filter((model) => modelMatchesFilters(model, "hardware"))
@@ -889,7 +942,11 @@ function compatibleModels(item, { ignoreShowFilter = false } = {}) {
     .map((model) => {
       const need = hardwareNeed(model).total;
       const blocker = fitBlocker(model, { bits: state.hardwareBits, task: state.hardwareTask, runtime: state.hardwareRuntime, supported, memoryOk: need <= capacity });
-      return { model, need, speed: hardwareSpeed(item, model, need), safeQuant: MF.taskAllows(model, rule, state.hardwareBits), fits: !blocker, blocker };
+      const speed = hardwareSpeed(item, model, need);
+      const gpuShare = hostPool > 0 && need > gpuPool ? gpuPool / need : null;
+      const prefill = prefillRate(model, { gpu: cpuKind ? null : item.raw, cpu: cpuKind ? item.raw : gpuShare === null ? null : state.hardwareCpu, quantity: state.hardwareGpuQuantity, users: state.hardwareUsers, gpuShare });
+      const ttft = MF.timeToFirstToken({ promptTokens, prefillTokPerSecond: prefill, decodeTokPerSecond: speed });
+      return { model, need, speed, ttft, safeQuant: MF.taskAllows(model, rule, state.hardwareBits), fits: !blocker, blocker };
     })
     .filter((row) => filter === "all" || (filter === "fits" ? row.fits : row.fits && row.speed >= state.hardwareTarget))
     .sort(modelComparator);
@@ -923,8 +980,10 @@ function renderHardwareView() {
   byId("hardware-profile-note").textContent = `${state.hardwareTask}: models below the task quantization floor are not counted as fitting. ${hostPool > 0 ? `CPU offload adds ${decimal.format(hostPool)} GB of host RAM; overflow layers run at CPU speed.` : "CPU offload is off."} Runtime ${state.hardwareRuntime}; KV cache ${state.hardwareKvBits}-bit; prompt ${byId("hardware-prompt-input").value}; answer ${byId("hardware-answer-input").value}.`;
   renderWarnings("hardware-warnings", hardwareWarnings(item));
   const summary = byId("hardware-summary");
-  const planning = String(item.raw["Evidence status"] || "").includes("Pre-release planning");
-  summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}${planning ? " · PRE-RELEASE PLANNING" : ""}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div>`;
+  const planning = isPlanningRow(item.raw);
+  const tflops = tflopsFor(item.kind === "cpu" ? "CPUs" : "GPUs", item.kind === "cpu" ? item.raw["CPU / platform"] : item.raw.Accelerator);
+  const computeNote = tflops ? "Compute estimate, used for first-token time" : planning ? "No public compute figure for this pre-release row" : "No compute estimate";
+  summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}${planning ? " · PRE-RELEASE PLANNING" : ""}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div><div class="metric"><span>${tflops ? `${decimal.format(tflops)} TFLOPS` : "—"}</span><small>${computeNote}</small></div>`;
   summary.querySelector("#show-hardware-evidence").addEventListener("click", () => openEvidence(item.raw, item.kind));
   const host = byId("hardware-model-results");
   host.replaceChildren();
@@ -940,7 +999,7 @@ function renderHardwareView() {
     article.className = "result-row model-result-row";
     if (!row.safeQuant) article.classList.add("quality-warning");
     const excelNeed = excelMemoryNeed(model, state.hardwareBits, state.hardwareContext, state.hardwareUsers, state.hardwareKvBits).total;
-    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.need <= capacity ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.need <= capacity ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : row.blocker}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Know more about ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i><span>Know more</span></button></div>`;
+    article.innerHTML = `<div class="hardware-cell"><span class="vendor-chip">${escapeHtml(String(model.Vendor || "LLM").slice(0, 2).toUpperCase())}</span><div class="hardware-name"><strong>${escapeHtml(model.Model)}</strong><small>${escapeHtml(model.Type)} · ${decimal.format(model["Total params (B)"])}B parameters</small></div></div><div class="fit-cell"><div class="fit-meta"><b>${decimal.format(row.need)} GB needed</b><span>${row.need <= capacity ? `${decimal.format(ratio)}%` : `short ${decimal.format(row.need - capacity)} GB`}</span></div><div class="fit-bar ${row.need <= capacity ? "" : "over"}"><span style="width:${Math.min(100, ratio)}%"></span></div><div class="fit-copy">${decimal.format(hardwareNeed(model).weights)} GB weights · ${decimal.format(hardwareNeed(model).kv)} GB KV · Excel ${decimal.format(excelNeed)} GB (${(row.need / excelNeed - 1) * 100 >= 0 ? "+" : ""}${decimal.format((row.need / excelNeed - 1) * 100)}%)</div></div><div class="speed-cell"><strong class="${fast ? "fast" : "slow"}">${decimal.format(row.speed)}</strong><small>tok/s est. · ${fast ? "Meets target" : row.fits ? "Fits, slower" : row.blocker}</small><small>${escapeHtml(firstTokenText(row.ttft, item.raw, item.kind))}</small></div><div class="hardware-arch"><code>${escapeHtml(model["Runtime arch"] || "—")}</code><small>${model.Layers}L × ${model["KV heads"]} KV × ${model["Head dim"]}d</small></div><div class="evidence-cell"><span class="status-pill ${evidenceClass(model["Evidence status"])}">${evidenceShort(model["Evidence status"])}</span><button class="row-detail" aria-label="Know more about ${escapeHtml(model.Model)}"><i data-lucide="arrow-up-right"></i><span>Know more</span></button></div>`;
     article.querySelector(".row-detail").addEventListener("click", () => openEvidence(model, "model"));
     host.append(article);
   }
@@ -1262,15 +1321,17 @@ async function copySummary() {
   const need = memoryNeed(state.model);
   const gpuFits = hardwareRowsForView("gpus").filter((row) => row.fits).length;
   const cpuFits = hardwareRowsForView("cpus").filter((row) => row.fits).length;
+  const timed = hardwareRowsForView("gpus").filter((row) => row.fits && row.ttft !== null).sort((a, b) => a.ttft - b.ttft);
   const text = [
     `Model Fit sizing: ${state.model.Model}`,
     `Parameters: ${decimal.format(state.model["Total params (B)"])}B total, ${decimal.format(state.model["Active params (B)"])}B active`,
     `Workload: ${byId("quant-select").value}, ${state.context.toLocaleString()} context, ${state.users} user${state.users > 1 ? "s" : ""}, KV ${state.kvBits}-bit, ${state.runtime}, ${state.task}`,
     `Memory needed: ${decimal.format(need.total)} GB (weights ${decimal.format(need.weights)} + KV cache ${decimal.format(need.kv)} + runtime ${decimal.format(need.runtime)})`,
     `Hardware that fits: ${gpuFits} GPUs, ${cpuFits} CPUs`,
-    "Speeds are bandwidth estimates, not benchmarks.",
+    timed.length ? `Fastest first token (${state.promptTokens.toLocaleString()}-token prompt): ${formatSeconds(timed[0].ttft)} on ${timed[0].name}` : "",
+    "Speeds and first-token times are estimates, not benchmarks.",
     location.href.split("?")[0],
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   const label = byId("copy-summary").querySelector("span");
   try {
     await navigator.clipboard.writeText(text);
@@ -1481,6 +1542,12 @@ async function boot() {
     efficiencyTable = MF.buildEfficiencyTable(state.data.libraries);
     if (!Object.keys(efficiencyTable).length) throw new Error("data.json has no runtime table. Rebuild it with scripts/build_web_data.py.");
     taskRules = MF.buildTaskRules(state.data.taskRules);
+    computeByItem = new Map((state.data.compute || []).map((row) => [`${row.Sheet}|${row.Item}`, Number(row["TFLOPS (est.)"])]));
+    try {
+      // Optional local file with compute estimates for pre-release rows; it is git-ignored and never published.
+      const computeResponse = await fetch("private_compute.json", { cache: "no-store" });
+      if (computeResponse.ok) for (const row of (await computeResponse.json()).compute || []) computeByItem.set(`${row.Sheet}|${row.Item}`, Number(row["TFLOPS (est.)"]));
+    } catch { /* the public site has no such file */ }
     try {
       const privateResponse = await fetch("private_reference.json", { cache: "no-store" });
       if (privateResponse.ok) {
@@ -1522,18 +1589,18 @@ async function boot() {
     bindEvents();
     window.ModelFitPipeline.init({
       data: state.data, efficiencyTable: () => efficiencyTable, runtimes: runtimeNames, intelOnly: () => state.intelOnly,
-      gpuLabel: gpuCatalogLabel, gpuName: gpuDisplayName, escapeHtml, iconize,
+      gpuLabel: gpuCatalogLabel, gpuName: gpuDisplayName, escapeHtml, iconize, tflops: tflopsFor, seconds: formatSeconds, isPlanning: isPlanningRow,
     });
     render();
     renderEvidence();
     renderParityAudit();
     renderVerification();
     iconize();
-    window.ModelFitApp = { state, showPage, render, renderHardwareView, hardwareRows, hardwareRowsForView, compatibleModels, currentHardwareItem, memoryNeed, copySummary, latestModels };
+    window.ModelFitApp = { state, showPage, render, renderHardwareView, hardwareRows, hardwareRowsForView, compatibleModels, currentHardwareItem, memoryNeed, copySummary, latestModels, tflopsFor };
     document.dispatchEvent(new CustomEvent("modelfit:ready"));
     if (new URLSearchParams(location.search).has("selftest")) {
       const script = document.createElement("script");
-      script.src = "selftest.js";
+      script.src = `selftest.js?run=${Date.now()}`;
       document.head.append(script);
     }
   } catch (error) {

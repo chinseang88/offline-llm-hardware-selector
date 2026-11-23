@@ -18,6 +18,9 @@ EXTRA_CARD_SCALE = 0.8
 HOST_RESERVE_GB = 8
 VOICE_EXTRA_GB = 5
 VOICE_BW_GBPS = 5
+PREFILL_MFU = 0.35
+CPU_PREFILL_FACTOR = 0.6
+PREFILL_GFLOPS_PER_B = 2
 OFFLOAD_RUNTIMES = ("llama.cpp", "Ollama", "LM Studio", "IPEX-LLM")
 HW_CLASSES = ("NVIDIA GPU", "AMD GPU", "Intel GPU / iGPU", "NPU (Intel/AMD)", "Apple Silicon", "x86 CPU", "ARM CPU",
               "Jetson (ARM+GPU)", "Qualcomm / Rockchip NPU")
@@ -105,6 +108,29 @@ def split_decode_tok_per_second(per_token_gb, gpu_share, gpu_rate, cpu_rate, use
         return 0.0
     seconds = per_token * ((share / gpu_rate if share > 0 else 0) + ((1 - share) / cpu_rate if share < 1 else 0))
     return 1 / seconds / (positive(users) or 1) if seconds > 0 else 0.0
+
+
+def prefill_tok_per_second(active_params_b, tflops, quantity=1, users=1, cpu=False, mfu=None):
+    """Workbook Power sheet: prefill is compute-bound. tok/s = MFU x TFLOPS x 1000 / (2 GFLOPs per billion active params)."""
+    gflops = PREFILL_GFLOPS_PER_B * positive(active_params_b)
+    tflops = positive(tflops)
+    if not gflops or not tflops:
+        return 0.0
+    mfu = PREFILL_MFU if mfu is None else positive(mfu)
+    scale = CPU_PREFILL_FACTOR if cpu else quantity_scale(quantity)
+    return mfu * tflops * scale * 1000 / gflops / (positive(users) or 1)
+
+
+def split_prefill_tok_per_second(gpu_share, gpu_rate, cpu_rate):
+    return split_decode_tok_per_second(1, gpu_share, gpu_rate, cpu_rate, 1)
+
+
+def time_to_first_token(prompt_tokens, prefill_tok_s, decode_tok_s):
+    """Workbook Power sheet: TTFT = prompt tokens / prefill tok/s + 1 / decode tok/s. None when either rate is unknown."""
+    prefill, decode = positive(prefill_tok_s), positive(decode_tok_s)
+    if not prefill or not decode:
+        return None
+    return positive(prompt_tokens) / prefill + 1 / decode
 
 
 def is_unified_memory(gpu):
@@ -227,8 +253,12 @@ def voice_weights_gb(row):
     return params * bits / 8 if params > 0 and bits > 0 else None
 
 
-def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quantity=1, headroom_pct=10, kv_bits=16, activity="simultaneous"):
-    """Voice stages reserve first; LLM slots are then checked cumulatively in order."""
+def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quantity=1, headroom_pct=10, kv_bits=16, activity="simultaneous",
+                 tflops=0, prompt_tokens=0, mfu=None):
+    """Voice stages reserve first; LLM slots are then checked cumulatively in order.
+
+    One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
+    """
     quantity = max(1, positive(quantity) or 1)
     headroom = max(0.0, 0.0 if math.isnan(num(headroom_pct)) else num(headroom_pct))
     usable = positive(memory_gb) * quantity * (1 - headroom / 100)
@@ -262,7 +292,8 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
         model = slot.get("model")
         if not model:
             rows.append({"slot": index, "model": None, "status": "UNUSED", "weights": 0.0, "kvOverhead": 0.0, "total": 0.0, "bwNeeded": 0.0,
-                         "cumulativeMemory": memory, "cumulativeBw": voice_bw + (bw_max if sequential else bw_sum), "fitsAlone": None, "tokAlone": None})
+                         "cumulativeMemory": memory, "cumulativeBw": voice_bw + (bw_max if sequential else bw_sum), "fitsAlone": None, "tokAlone": None,
+                         "target": 0.0, "prefillAlone": None, "ttftAlone": None, "ttftLoaded": None})
             continue
         used += 1
         bits, context, target = positive(slot.get("bits")), positive(slot.get("context")), positive(slot.get("target"))
@@ -289,17 +320,47 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
             status = "NO - BANDWIDTH"
         review = status.startswith("REVIEW")
         fits += status == "FITS"
+        tok_alone = None if review or not per_token else max(0.0, effective_bw - voice_bw) / per_token
+        prefill_alone = None if review else (prefill_tok_per_second(model.get("Active params (B)"), tflops, quantity, 1, False, mfu) or None)
         rows.append({"slot": index, "model": model.get("Model"), "status": status, "weights": weights, "kvOverhead": kv_overhead, "total": total,
                      "bwNeeded": bw_needed, "cumulativeMemory": memory, "cumulativeBw": cumulative_bw,
                      "fitsAlone": None if review else voice_memory + total <= usable,
-                     "tokAlone": None if review or not per_token else max(0.0, effective_bw - voice_bw) / per_token})
+                     "tokAlone": tok_alone, "target": target, "prefillAlone": prefill_alone,
+                     "ttftAlone": time_to_first_token(prompt_tokens, prefill_alone, tok_alone), "ttftLoaded": None})
+    bw_required = voice_bw + (bw_max if sequential else bw_sum)
     reviews = sum(row["status"].startswith("REVIEW") for row in rows)
     verdict = "INPUTS SET"
     if usable <= 0 or effective_bw <= 0:
         verdict = "REVIEW: select accelerator, quantity, headroom and utilization"
     elif reviews:
         verdict = "REVIEW: fix LLM inputs"
+
+    # Concurrent sets: every set needs its own memory and bandwidth; the smaller limit wins.
+    countable = verdict == "INPUTS SET" and memory > 0
+    sets_by_memory = math.floor(usable / memory + 1e-9) if countable else None
+    sets_by_bandwidth = math.floor(effective_bw / bw_required + 1e-9) if countable and bw_required > 0 else None
+    sets = None if not countable else sets_by_memory if sets_by_bandwidth is None else min(sets_by_memory, sets_by_bandwidth)
+    if sets is None:
+        sets_limit = None
+    elif sets_by_bandwidth is None or sets_by_memory < sets_by_bandwidth:
+        sets_limit = "memory"
+    elif sets_by_bandwidth < sets_by_memory:
+        sets_limit = "bandwidth"
+    else:
+        sets_limit = "memory and bandwidth"
+
+    # First token with every set busy: all LLMs that answer together share the prefill compute; each still decodes at its target.
+    together = sets * (1 if sequential else max(1, used)) if sets else 0
+    ttft_worst = None
+    for row in rows:
+        if not together or not row["prefillAlone"]:
+            continue
+        row["ttftLoaded"] = time_to_first_token(prompt_tokens, row["prefillAlone"] / together, row["target"])
+        if row["ttftLoaded"] is not None and (ttft_worst is None or row["ttftLoaded"] > ttft_worst):
+            ttft_worst = row["ttftLoaded"]
     return {"usableGb": usable, "effectiveBwGbps": effective_bw, "voice": voice_rows, "voiceWeightsGb": voice_weights, "voiceExtraGb": voice_extra,
             "voiceMemoryGb": voice_memory, "voiceBwGbps": voice_bw, "voicePending": pending, "llms": rows, "memoryUsedGb": memory,
-            "memoryMarginGb": usable - memory, "bwRequiredGbps": voice_bw + (bw_max if sequential else bw_sum), "llmsUsed": used, "llmsFit": fits,
-            "allFit": verdict == "INPUTS SET" and used > 0 and fits == used, "verdict": verdict}
+            "memoryMarginGb": usable - memory, "bwRequiredGbps": bw_required, "llmsUsed": used, "llmsFit": fits,
+            "allFit": verdict == "INPUTS SET" and used > 0 and fits == used, "verdict": verdict,
+            "setMemoryGb": memory, "setBwGbps": bw_required, "setsByMemory": sets_by_memory, "setsByBandwidth": sets_by_bandwidth,
+            "sets": sets, "setsLimit": sets_limit, "ttftWorstLoaded": ttft_worst}
