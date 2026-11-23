@@ -43,10 +43,10 @@ The app is lower on memory for small models (no 1 GB runtime floor) and higher o
 | LLM slot memory | `total × bits / 8 × 1.03 + KV cache (1 user, KV bits selectable, FP16 in the workbook) + 0.07 × weights` |
 | LLM slot bandwidth | `active × bits / 8 × 1.03 × target tok/s` |
 | Fit | slots are added in order on top of the voice reserve: `NO - GPU MEMORY` when the running memory passes usable, else `NO - BANDWIDTH` when running bandwidth passes effective (sum of slots when all answer at once, the largest slot when one at a time) |
-| One set | Stage 1 VAD + Stage 2 diarization + Stage 3 ASR + the Stage 4 LLMs, each set with its own loaded copy of every model. Memory per set = voice reserve + every LLM slot; bandwidth per set = voice bandwidth + LLM bandwidth |
-| Concurrent sets | `min(floor(usable memory / memory per set), floor(effective bandwidth / bandwidth per set))`; no answer while an input needs review. Serving several sets from one shared copy of the weights would allow more and is not modelled |
+| One set | Stage 1 VAD + Stage 2 diarization + Stage 3 ASR + the Stage 4 LLM (one per set), each set with its own loaded copy of every model. Memory per set = voice reserve + the LLM; bandwidth per set = voice bandwidth + LLM bandwidth |
+| Concurrent sets (Stage 5) | `min(floor(usable memory / memory per set), floor(effective bandwidth / bandwidth per set))`; no answer while an input needs review. Serving several sets from one shared copy of the weights would allow more and is not modelled |
 | First token, alone | `prompt_tokens / prefill_tok_s + 1 / (bandwidth left after voice / bytes per token)` |
-| First token, every set busy | the LLMs that answer together (`sets × LLMs`, or `sets` when one at a time) share the prefill compute; each decodes at its target: `prompt_tokens / (prefill_tok_s / together) + 1 / target`. Voice-stage latency is not modelled |
+| First token, every set busy | the LLMs of all sets share the prefill compute; each decodes at its target: `prompt_tokens / (prefill_tok_s / sets) + 1 / target`. Voice-stage latency is not modelled |
 
 These are planning estimates (memory-bandwidth bound decode, no prefill, no speculative decoding). Always say so.
 

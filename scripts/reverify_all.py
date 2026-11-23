@@ -215,9 +215,8 @@ def check_references(report, tables):
                 ("pipeline default quantization", re.search(r'const DEFAULT_QUANT = "([^"]+)"', pipeline), quant_names)]
     for label, match, names in defaults:
         report.check(group, f"{label} named in the code exists in the data", bool(match) and match.group(1) in names, match.group(1) if match else "not found in source")
-    llm_defaults = re.search(r"const DEFAULT_LLMS = \[([^\]]+)\]", pipeline)
-    names = re.findall(r'"([^"]+)"', llm_defaults.group(1)) if llm_defaults else []
-    report.check(group, "pipeline default LLMs exist in the model table", bool(names) and set(names) <= model_names, sample(sorted(set(names) - model_names)) or "not found in source")
+    llm_default = re.search(r'const DEFAULT_LLM = "([^"]+)"', pipeline)
+    report.check(group, "Multi-LLM default LLM exists in the model table", bool(llm_default) and llm_default.group(1) in model_names, llm_default.group(1) if llm_default else "not found in source")
     voice_defaults = re.search(r"const DEFAULT_VOICE = \[(.+?)\];", pipeline)
     pairs = re.findall(r'\["([^"]+)", "([^"]+)"\]', voice_defaults.group(1)) if voice_defaults else []
     voice_pairs = {(row["Stage"], row["Model"]) for row in tables["voice_models"]}
