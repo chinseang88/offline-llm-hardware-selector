@@ -258,33 +258,43 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
     """Voice stages reserve first; LLM slots are then checked cumulatively in order.
 
     One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
+    A stage may give its own "utilization" (its runtime's bandwidth efficiency) and an LLM its own "kvBits"; both fall back to the shared inputs.
     """
     quantity = max(1, positive(quantity) or 1)
     headroom = max(0.0, 0.0 if math.isnan(num(headroom_pct)) else num(headroom_pct))
     usable = positive(memory_gb) * quantity * (1 - headroom / 100)
-    effective_bw = positive(bandwidth_gbps) * quantity_scale(quantity) * positive(utilization)
-    kv_bits = positive(kv_bits) or 16
+    raw_bw = positive(bandwidth_gbps) * quantity_scale(quantity)
+    shared_util = positive(utilization)
+    effective_bw = raw_bw * shared_util
+    shared_kv_bits = positive(kv_bits) or 16
+    own_util = lambda stage: stage.get("utilization") is not None
+    util_of = lambda stage: positive(stage.get("utilization")) if own_util(stage) else shared_util
+    stage_utils = any(own_util(stage) for stage in voice) or any(own_util(slot) for slot in llms)
 
-    voice_weights = voice_extra = voice_bw = 0.0
-    pending = 0
+    voice_weights = voice_extra = voice_bw = voice_raw = 0.0
+    pending = runtime_reviews = 0
     voice_rows = []
     for stage in voice:
         on_gpu = stage.get("placement") != "CPU"
-        raw = num(stage.get("weightsGb"))
-        weights = (None if math.isnan(raw) else raw) if on_gpu else 0.0
+        given = num(stage.get("weightsGb"))
+        weights = (None if math.isnan(given) else given) if on_gpu else 0.0
         extra = max(0.0, positive(stage.get("extraGb"))) if on_gpu else 0.0
         bw = max(0.0, positive(stage.get("bwGbps"))) if on_gpu else 0.0
-        status = "CPU - not sized" if not on_gpu else "WEIGHTS PENDING" if weights is None else "INPUTS SET"
-        pending += status == "WEIGHTS PENDING"
+        util = util_of(stage) if on_gpu else 0.0
+        raw = bw / util if util > 0 else 0.0
+        status = "CPU - not sized" if not on_gpu else "REVIEW: RUNTIME" if util <= 0 else "WEIGHTS PENDING" if weights is None else "INPUTS SET"
+        pending += on_gpu and weights is None
+        runtime_reviews += status == "REVIEW: RUNTIME"
         voice_weights += weights or 0.0
         voice_extra += extra
         voice_bw += bw
+        voice_raw += raw
         voice_rows.append({"stage": stage.get("stage"), "name": stage.get("name"), "placement": "GPU" if on_gpu else "CPU",
-                           "weightsGb": weights, "extraGb": extra, "bwGbps": bw, "status": status})
+                           "weightsGb": weights, "extraGb": extra, "bwGbps": bw, "utilization": util, "rawBwGbps": raw, "status": status})
     voice_memory = voice_weights + voice_extra
 
     memory = voice_memory
-    bw_sum = bw_max = 0.0
+    bw_sum = bw_max = raw_sum = raw_max = 0.0
     fits = used = 0
     rows = []
     sequential = activity == "sequential"
@@ -293,19 +303,26 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
         if not model:
             rows.append({"slot": index, "model": None, "status": "UNUSED", "weights": 0.0, "kvOverhead": 0.0, "total": 0.0, "bwNeeded": 0.0,
                          "cumulativeMemory": memory, "cumulativeBw": voice_bw + (bw_max if sequential else bw_sum), "fitsAlone": None, "tokAlone": None,
-                         "target": 0.0, "prefillAlone": None, "ttftAlone": None, "ttftLoaded": None})
+                         "target": 0.0, "prefillAlone": None, "ttftAlone": None, "ttftLoaded": None,
+                         "utilization": 0.0, "kvBits": 0.0, "rawBwNeeded": 0.0, "cumulativeRawBw": voice_raw + (raw_max if sequential else raw_sum)})
             continue
         used += 1
         bits, context, target = positive(slot.get("bits")), positive(slot.get("context")), positive(slot.get("target"))
+        util = util_of(slot)
+        slot_kv_bits = positive(slot.get("kvBits")) or shared_kv_bits
         weights = positive(model.get("Total params (B)")) * bits / 8 * WEIGHT_MARGIN
-        kv_overhead = kv_per_token_gb(model, kv_bits) * context + weights * RUNTIME_SHARE
+        kv_overhead = kv_per_token_gb(model, slot_kv_bits) * context + weights * RUNTIME_SHARE
         total = weights + kv_overhead
         per_token = positive(model.get("Active params (B)")) * bits / 8 * WEIGHT_MARGIN
         bw_needed = per_token * target
+        raw_needed = bw_needed / util if util > 0 else 0.0
         memory += total
         bw_sum += bw_needed
         bw_max = max(bw_max, bw_needed)
+        raw_sum += raw_needed
+        raw_max = max(raw_max, raw_needed)
         cumulative_bw = voice_bw + (bw_max if sequential else bw_sum)
+        cumulative_raw = voice_raw + (raw_max if sequential else raw_sum)
         limit = positive(model.get("Max context"))
         status = "FITS"
         if not bits or not context or not target:
@@ -314,31 +331,39 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
             status = "REVIEW: MODEL SPECS MISSING"
         elif limit and context > limit:
             status = "REVIEW: CONTEXT > MODEL LIMIT"
+        elif util <= 0:
+            status = "REVIEW: RUNTIME"
         elif memory > usable:
             status = "NO - GPU MEMORY"
-        elif cumulative_bw > effective_bw:
+        elif cumulative_raw > raw_bw:
             status = "NO - BANDWIDTH"
         review = status.startswith("REVIEW")
         fits += status == "FITS"
-        tok_alone = None if review or not per_token else max(0.0, effective_bw - voice_bw) / per_token
+        runtime_reviews += status == "REVIEW: RUNTIME"
+        tok_alone = None if review or not per_token else max(0.0, raw_bw - voice_raw) * util / per_token
         prefill_alone = None if review else (prefill_tok_per_second(model.get("Active params (B)"), tflops, quantity, 1, False, mfu) or None)
         rows.append({"slot": index, "model": model.get("Model"), "status": status, "weights": weights, "kvOverhead": kv_overhead, "total": total,
                      "bwNeeded": bw_needed, "cumulativeMemory": memory, "cumulativeBw": cumulative_bw,
                      "fitsAlone": None if review else voice_memory + total <= usable,
                      "tokAlone": tok_alone, "target": target, "prefillAlone": prefill_alone,
-                     "ttftAlone": time_to_first_token(prompt_tokens, prefill_alone, tok_alone), "ttftLoaded": None})
+                     "ttftAlone": time_to_first_token(prompt_tokens, prefill_alone, tok_alone), "ttftLoaded": None,
+                     "utilization": util, "kvBits": slot_kv_bits, "rawBwNeeded": raw_needed, "cumulativeRawBw": cumulative_raw})
     bw_required = voice_bw + (bw_max if sequential else bw_sum)
+    raw_required = voice_raw + (raw_max if sequential else raw_sum)
     reviews = sum(row["status"].startswith("REVIEW") for row in rows)
     verdict = "INPUTS SET"
-    if usable <= 0 or effective_bw <= 0:
+    if usable <= 0 or raw_bw <= 0 or (not stage_utils and shared_util <= 0):
         verdict = "REVIEW: select accelerator, quantity, headroom and utilization"
+    elif runtime_reviews:
+        verdict = "REVIEW: pick a runtime that runs on this accelerator"
     elif reviews:
         verdict = "REVIEW: fix LLM inputs"
 
     # Concurrent sets: every set needs its own memory and bandwidth; the smaller limit wins.
+    # Bandwidth is counted at the accelerator: each stage's need divided by its runtime's bandwidth efficiency.
     countable = verdict == "INPUTS SET" and memory > 0
     sets_by_memory = math.floor(usable / memory + 1e-9) if countable else None
-    sets_by_bandwidth = math.floor(effective_bw / bw_required + 1e-9) if countable and bw_required > 0 else None
+    sets_by_bandwidth = math.floor(raw_bw / raw_required + 1e-9) if countable and raw_required > 0 else None
     sets = None if not countable else sets_by_memory if sets_by_bandwidth is None else min(sets_by_memory, sets_by_bandwidth)
     if sets is None:
         sets_limit = None
@@ -363,4 +388,5 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
             "memoryMarginGb": usable - memory, "bwRequiredGbps": bw_required, "llmsUsed": used, "llmsFit": fits,
             "allFit": verdict == "INPUTS SET" and used > 0 and fits == used, "verdict": verdict,
             "setMemoryGb": memory, "setBwGbps": bw_required, "setsByMemory": sets_by_memory, "setsByBandwidth": sets_by_bandwidth,
-            "sets": sets, "setsLimit": sets_limit, "ttftWorstLoaded": ttft_worst}
+            "sets": sets, "setsLimit": sets_limit, "ttftWorstLoaded": ttft_worst,
+            "rawBwGbps": raw_bw, "voiceRawBwGbps": voice_raw, "setRawBwGbps": raw_required}

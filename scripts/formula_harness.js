@@ -14,8 +14,9 @@ function pipeline(result) {
     result.usableGb, result.effectiveBwGbps, result.voiceWeightsGb, result.voiceExtraGb, result.voiceMemoryGb, result.voiceBwGbps, result.voicePending,
     result.memoryUsedGb, result.memoryMarginGb, result.bwRequiredGbps, result.llmsUsed, result.llmsFit, flag(result.allFit), result.verdict,
     result.setMemoryGb, result.setBwGbps, result.setsByMemory, result.setsByBandwidth, result.sets, result.setsLimit, result.ttftWorstLoaded,
-    ...result.voice.flatMap((row) => [row.placement, row.weightsGb, row.extraGb, row.bwGbps, row.status]),
-    ...result.llms.flatMap((row) => [row.status, row.weights, row.kvOverhead, row.total, row.bwNeeded, row.cumulativeMemory, row.cumulativeBw, flag(row.fitsAlone), row.tokAlone, row.target, row.prefillAlone, row.ttftAlone, row.ttftLoaded]),
+    result.rawBwGbps, result.voiceRawBwGbps, result.setRawBwGbps,
+    ...result.voice.flatMap((row) => [row.placement, row.weightsGb, row.extraGb, row.bwGbps, row.status, row.utilization, row.rawBwGbps]),
+    ...result.llms.flatMap((row) => [row.status, row.weights, row.kvOverhead, row.total, row.bwNeeded, row.cumulativeMemory, row.cumulativeBw, flag(row.fitsAlone), row.tokAlone, row.target, row.prefillAlone, row.ttftAlone, row.ttftLoaded, row.utilization, row.kvBits, row.rawBwNeeded, row.cumulativeRawBw]),
   ];
 }
 

@@ -1,4 +1,4 @@
-/* Multi-LLM page: configure Stage 1 VAD, Stage 2 diarization, Stage 3 ASR and Stage 4 LLM; Stage 5 counts the sets that run at once. */
+/* Multi-LLM page: configure Stage 1 VAD, Stage 2 diarization, Stage 3 ASR and Stage 4 LLM, each with its own runtime; Stage 5 counts the sets that run at once. */
 (function () {
   "use strict";
   const MF = window.ModelFit;
@@ -6,8 +6,13 @@
   const DEFAULT_GPU = "Intel CRI XT 32Xe 160GB 300W (CCG)";
   const DEFAULT_QUANT = "Q4_K_M / INT4-AWQ";
   const DEFAULT_LLM = "Qwen3 32B";
+  const DEFAULT_RUNTIME = "llama.cpp";
+  const KV_BITS = [[4, "4-bit"], [8, "8-bit"], [16, "16-bit FP16"]];
   const DEFAULT_VOICE = [["VAD", "Silero VAD"], ["Diarization", "pyannote community-1"], ["ASR", "Qwen3-ASR-1.7B"]];
   const STAGE_TITLES = { VAD: "Voice activity detection (VAD)", Diarization: "Speaker diarization", ASR: "Speech recognition (ASR)" };
+  // The voice catalog has no attention geometry, so a voice stage's cache is not sized from a formula.
+  const VOICE_KV = { VAD: "No KV cache", Diarization: "No KV cache", ASR: "In the reserve" };
+  const VOICE_KV_WHY = { ASR: "The decoder cache of a speech recognition model is small and is covered by the activation reserve." };
   const number = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
   const fine = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
@@ -20,16 +25,15 @@
     const voiceNames = new Set((ctx.data.voiceModels || []).map((row) => `${row.Stage}|${row.Model}`));
     const gpus = ctx.data.gpus;
     const gpu = gpus.find((row) => row.Accelerator === DEFAULT_GPU) || [...gpus].sort((a, b) => Number(b["Memory (GB)"]) - Number(a["Memory (GB)"]))[0];
+    const runtime = ctx.runtimes().includes(DEFAULT_RUNTIME) ? DEFAULT_RUNTIME : ctx.runtimes()[0] || "";
     return {
       gpu: gpu ? gpu.Accelerator : "",
       quantity: 1,
-      runtime: "llama.cpp",
-      kvBits: 16,
       headroom: 10,
       util: "auto",
       promptTokens: 2048,
-      voice: DEFAULT_VOICE.map(([stage, model]) => ({ stage, model: voiceNames.has(`${stage}|${model}`) ? model : "", placement: "GPU", manual: "", extra: MF.VOICE_EXTRA_GB, bw: MF.VOICE_BW_GBPS })),
-      llm: { model: models.has(DEFAULT_LLM) ? DEFAULT_LLM : "", quant: DEFAULT_QUANT, context: 8192, target: 20 },
+      voice: DEFAULT_VOICE.map(([stage, model]) => ({ stage, model: voiceNames.has(`${stage}|${model}`) ? model : "", placement: "GPU", runtime, manual: "", extra: MF.VOICE_EXTRA_GB, bw: MF.VOICE_BW_GBPS })),
+      llm: { model: models.has(DEFAULT_LLM) ? DEFAULT_LLM : "", quant: DEFAULT_QUANT, runtime, kvBits: 16, context: 8192, target: 20 },
     };
   }
 
@@ -42,13 +46,17 @@
     return ctx.data.gpus.find((row) => row.Accelerator === state.gpu) || null;
   }
 
-  function runtimeEfficiency() {
+  // Share of the accelerator's bandwidth one stage's runtime can use; the BW utilization control can fix it for every stage.
+  function stageUse(runtime) {
+    if (state.util !== "auto") return { efficiency: Number(state.util), backend: "fixed" };
     const gpu = selectedGpu();
-    return gpu ? MF.gpuRuntimeEfficiency(ctx.efficiencyTable(), state.runtime, gpu) : { efficiency: 0, backend: "unsupported" };
+    return gpu ? MF.gpuRuntimeEfficiency(ctx.efficiencyTable(), runtime, gpu) : { efficiency: 0, backend: "unsupported" };
   }
 
-  function utilization() {
-    return state.util === "auto" ? runtimeEfficiency().efficiency : Number(state.util);
+  function useLabel(runtime) {
+    const use = stageUse(runtime);
+    const percent = `${Math.round(use.efficiency * 100)}%`;
+    return use.backend === "fixed" ? `${percent}, fixed by hand` : `${percent}, ${runtime}${use.backend === "vulkan" ? " via Vulkan fallback" : ""}`;
   }
 
   function voiceCatalog(stage, name) {
@@ -67,6 +75,7 @@
         weightsGb: Number.isFinite(manual) && manual >= 0 ? manual : catalog,
         extraGb: selected ? stage.extra : 0,
         bwGbps: selected ? stage.bw : 0,
+        utilization: stageUse(stage.runtime).efficiency,
         selected,
       };
     });
@@ -79,14 +88,13 @@
       bandwidthGbps: gpu ? gpu["Bandwidth (GB/s)"] : 0,
       quantity: state.quantity,
       headroomPct: state.headroom,
-      utilization: utilization(),
-      kvBits: state.kvBits,
       tflops: gpu ? ctx.tflops("GPUs", gpu.Accelerator) : 0,
       promptTokens: state.promptTokens,
       voice: voiceInputs(),
       llms: [{
         model: ctx.data.models.find((row) => row.Model === state.llm.model) || null,
         bits: quantBits(state.llm.quant), context: state.llm.context, target: state.llm.target,
+        utilization: stageUse(state.llm.runtime).efficiency, kvBits: state.llm.kvBits,
       }],
     });
   }
@@ -111,15 +119,21 @@
 
   function syncControls() {
     rebuildGpuSelect();
-    const runtimeSelect = byId("pipe-runtime-select");
-    runtimeSelect.replaceChildren(...ctx.runtimes().map((name) => new Option(name, name)));
-    runtimeSelect.value = state.runtime;
     byId("pipe-qty-select").value = String(state.quantity);
-    byId("pipe-kv-select").value = String(state.kvBits);
     byId("pipe-headroom-select").value = String(state.headroom);
     byId("pipe-bw-util-select").value = String(state.util);
     byId("pipe-prompt-select").value = String(state.promptTokens);
     byId("pipe-intel-only-toggle").setAttribute("aria-pressed", String(ctx.intelOnly()));
+  }
+
+  function runtimeField(attrs, value, disabled) {
+    return `<label>Runtime<select ${attrs} data-field="runtime"${disabled ? " disabled" : ""}>${ctx.runtimes().map((name) => option(name, name, name === value)).join("")}</select></label>`;
+  }
+
+  // What one stage takes from the accelerator's bandwidth once its runtime's efficiency is counted.
+  function bandwidthShare(runtime, rawGbps) {
+    if (!stageUse(runtime).efficiency) return ` <b>${ctx.escapeHtml(runtime)}</b> does not run on this accelerator: choose another runtime or set BW utilization by hand.`;
+    return rawGbps > 0 ? ` That takes <b>${number.format(rawGbps)} GB/s</b> of the accelerator (${ctx.escapeHtml(useLabel(runtime))}).` : "";
   }
 
   // Stage 4: the one LLM of each set.
@@ -134,11 +148,13 @@
         <div class="stage-fields">
           <label>Model<select data-llm="0" data-field="model">${option("", "(Not used)", !slot.model)}${models.map((row) => option(row.Model, `${row.Model} · ${number.format(row["Total params (B)"])}B`, row.Model === slot.model)).join("")}</select></label>
           <label>Quantization<select data-llm="0" data-field="quant">${ctx.data.quants.map((quant) => option(quant.Quantization, quant.Quantization, quant.Quantization === slot.quant)).join("")}</select></label>
+          ${runtimeField('data-llm="0"', slot.runtime, false)}
+          <label>KV cache<select data-llm="0" data-field="kvBits">${KV_BITS.map(([value, label]) => option(value, label, value === slot.kvBits)).join("")}</select></label>
           <label>Context<select data-llm="0" data-field="context">${CONTEXTS.map(([value, label]) => option(value, label, value === slot.context)).join("")}</select></label>
           <label>Target tok/s<input data-llm="0" data-field="target" type="number" min="1" step="1" inputmode="numeric" value="${slot.target}"></label>
           <label>First token, running alone<output>${used ? ctx.seconds(out.ttftAlone) : "—"}</output></label>
         </div>
-        <p class="stage-total">Each set needs <b>${fine.format(out.total)} GB</b> (weights ${fine.format(out.weights)} + KV cache and overhead ${fine.format(out.kvOverhead)}) and <b>${number.format(out.bwNeeded)} GB/s</b> for this stage.</p>
+        <p class="stage-total">Each set needs <b>${fine.format(out.total)} GB</b> (weights ${fine.format(out.weights)} + KV cache and overhead ${fine.format(out.kvOverhead)}) and <b>${number.format(out.bwNeeded)} GB/s</b> for this stage.${used ? bandwidthShare(slot.runtime, out.rawBwNeeded) : ""}</p>
       </section>`;
   }
 
@@ -150,16 +166,19 @@
       const names = (ctx.data.voiceModels || []).filter((row) => row.Stage === stage.stage).map((row) => row.Model);
       const status = !stage.model ? "NOT USED" : out.status;
       const memory = (out.weightsGb || 0) + out.extraGb;
+      const onGpu = Boolean(stage.model) && stage.placement === "GPU";
       return `<section class="pipeline-card stage-card" aria-label="Stage ${index + 1}: ${ctx.escapeHtml(stage.stage)}">
         <div class="pipeline-card-head"><div><p class="section-label">Stage ${index + 1}</p><h2>${ctx.escapeHtml(STAGE_TITLES[stage.stage] || stage.stage)}</h2></div><span class="status-pill ${status === "NOT USED" ? "amber" : pillClass(status)}">${ctx.escapeHtml(status)}</span></div>
         <div class="stage-fields">
           <label>Model<select data-voice="${index}" data-field="model">${option("", "(Not used)", !stage.model)}${names.map((name) => option(name, name, name === stage.model)).join("")}</select></label>
           <label>Runs on<select data-voice="${index}" data-field="placement">${option("GPU", "GPU", stage.placement === "GPU")}${option("CPU", "CPU (not sized)", stage.placement === "CPU")}</select></label>
+          ${runtimeField(`data-voice="${index}"`, stage.runtime, !onGpu)}
           <label>Resident weights (GB)<input data-voice="${index}" data-field="manual" type="number" min="0" step="0.001" inputmode="decimal" value="${ctx.escapeHtml(stage.manual)}" placeholder="${catalog === null ? "measure" : fine.format(catalog)}"></label>
           <label>Activation reserve (GB)<input data-voice="${index}" data-field="extra" type="number" min="0" step="0.5" inputmode="decimal" value="${stage.extra}"></label>
           <label>Bandwidth (GB/s)<input data-voice="${index}" data-field="bw" type="number" min="0" step="0.5" inputmode="decimal" value="${stage.bw}"></label>
+          <label title="${ctx.escapeHtml(VOICE_KV_WHY[stage.stage] || "This stage does not generate tokens one at a time, so it keeps no KV cache.")}">KV cache<output>${ctx.escapeHtml(VOICE_KV[stage.stage] || "No KV cache")}</output></label>
         </div>
-        <p class="stage-total">Each set reserves <b>${fine.format(memory)} GB</b> and <b>${number.format(out.bwGbps)} GB/s</b> for this stage.</p>
+        <p class="stage-total">Each set reserves <b>${fine.format(memory)} GB</b> and <b>${number.format(out.bwGbps)} GB/s</b> for this stage.${onGpu ? bandwidthShare(stage.runtime, out.rawBwGbps) : ""}</p>
       </section>`;
     }).join("") + llmCard(result);
   }
@@ -169,15 +188,20 @@
   // Stage 5: how many complete sets of Stage 1 to 4 run at the same time, and the first-token time under that load.
   function renderAnswer(result) {
     const gpu = selectedGpu();
-    const eff = runtimeEfficiency();
     const planning = gpu && ctx.isPlanning(gpu);
     const hardware = gpu ? `${ctx.gpuName(gpu.Accelerator)}${state.quantity > 1 ? ` × ${state.quantity}` : ""}` : "no accelerator";
+    // Stages that take accelerator bandwidth, each with the runtime chosen in its card.
+    const active = [
+      ...state.voice.filter((stage) => stage.model && stage.placement === "GPU").map((stage) => ({ name: stage.stage, runtime: stage.runtime })),
+      ...(state.llm.model ? [{ name: "LLM", runtime: state.llm.runtime }] : []),
+    ].map((stage) => ({ ...stage, use: stageUse(stage.runtime) }));
+    const blocked = active.filter((stage) => !stage.use.efficiency);
     const sets = result.sets;
     let headline;
     let reason;
     if (result.verdict !== "INPUTS SET") {
       headline = "No answer yet";
-      reason = result.verdict;
+      reason = blocked.length ? `${blocked.map((stage) => `${stage.name}: ${stage.runtime} does not run on this accelerator`).join(". ")}. Choose another runtime in that stage or set BW utilization by hand.` : result.verdict;
     } else if (sets === null) {
       headline = "No answer yet";
       reason = "Select a model in at least one stage.";
@@ -187,9 +211,11 @@
       reason = result.setsByBandwidth === null ? `${byMemory}. No GPU stage uses bandwidth, so memory is the only limit.` : `${byMemory} and bandwidth allows ${result.setsByBandwidth}. The limit is ${result.setsLimit}.`;
     }
     const notes = [`On ${hardware}`, "each set loads its own copy of every model"];
-    if (state.util === "auto") notes.push(eff.efficiency ? `bandwidth use ${Math.round(eff.efficiency * 100)}% from ${state.runtime}${eff.backend === "vulkan" ? " (Vulkan fallback)" : ""}` : `${state.runtime} does not run on this accelerator: pick another runtime or set bandwidth use by hand`);
-    else notes.push(`bandwidth use fixed at ${Math.round(Number(state.util) * 100)}%`);
-    notes.push(`KV cache ${state.kvBits}-bit`);
+    const percent = (use) => `${Math.round(use.efficiency * 100)}%`;
+    if (state.util !== "auto") notes.push(`bandwidth use fixed at ${Math.round(Number(state.util) * 100)}% for every stage`);
+    else if (active.length && new Set(active.map((stage) => stage.runtime)).size === 1) notes.push(`every stage on ${active[0].runtime}${active[0].use.efficiency ? ` (${percent(active[0].use)} bandwidth use${active[0].use.backend === "vulkan" ? ", Vulkan fallback" : ""})` : ""}`);
+    else if (active.length) notes.push(`bandwidth use by stage runtime: ${active.map((stage) => `${stage.name} ${stage.runtime}${stage.use.efficiency ? ` ${percent(stage.use)}` : " not supported"}`).join(", ")}`);
+    if (state.llm.model) notes.push(`LLM KV cache ${state.llm.kvBits}-bit`);
     const unused = state.voice.filter((stage) => !stage.model).map((stage) => stage.stage);
     if (unused.length) notes.push(`${unused.join(" and ")} not used, so not counted`);
     if (!result.llmsUsed) notes.push("Stage 4 has no LLM selected");
@@ -205,7 +231,7 @@
     else if (alone !== null) { ttft = ctx.seconds(alone); ttftNote = `Time to first token, one set running alone · ${prompt}`; }
     else ttftNote = "Time to first token: select an LLM in Stage 4";
     const count = (value) => value === null ? "—" : String(value);
-    byId("pipeline-summary").innerHTML = `<div><p class="section-label">Stage 5${planning ? " · pre-release planning row" : ""}</p><h2>${ctx.escapeHtml(headline)}</h2><p class="pipeline-verdict">${ctx.escapeHtml(reason)}</p><p class="pipeline-notes">${ctx.escapeHtml(notes.join(" · "))}</p></div><div class="metric"><span>${count(result.setsByMemory)}</span><small>Sets by memory · ${number.format(result.setMemoryGb)} GB per set of ${number.format(result.usableGb)} GB usable</small></div><div class="metric"><span>${count(result.setsByBandwidth)}</span><small>Sets by bandwidth · ${number.format(result.setBwGbps)} GB/s per set of ${number.format(result.effectiveBwGbps)} GB/s</small></div><div class="metric"><span>${ttft}</span><small>${ctx.escapeHtml(ttftNote)}</small></div>`;
+    byId("pipeline-summary").innerHTML = `<div><p class="section-label">Stage 5${planning ? " · pre-release planning row" : ""}</p><h2>${ctx.escapeHtml(headline)}</h2><p class="pipeline-verdict">${ctx.escapeHtml(reason)}</p><p class="pipeline-notes">${ctx.escapeHtml(notes.join(" · "))}</p></div><div class="metric"><span>${count(result.setsByMemory)}</span><small>Sets by memory · ${number.format(result.setMemoryGb)} GB per set of ${number.format(result.usableGb)} GB usable</small></div><div class="metric"><span>${count(result.setsByBandwidth)}</span><small>Sets by bandwidth · ${number.format(result.setRawBwGbps)} GB/s per set of ${number.format(result.rawBwGbps)} GB/s at the accelerator</small></div><div class="metric"><span>${ttft}</span><small>${ctx.escapeHtml(ttftNote)}</small></div>`;
   }
 
   function render() {
@@ -226,10 +252,11 @@
       const stage = state.voice[Number(target.dataset.voice)];
       if (field === "model") { stage.model = target.value; stage.manual = ""; }
       else if (field === "placement") stage.placement = target.value;
+      else if (field === "runtime") stage.runtime = target.value;
       else if (field === "manual") stage.manual = target.value;
       else stage[field] = Math.max(0, Number(target.value) || 0);
     } else if (target.dataset.llm !== undefined) {
-      if (field === "context") state.llm.context = Number(target.value);
+      if (field === "context" || field === "kvBits") state.llm[field] = Number(target.value);
       else if (field === "target") state.llm.target = Math.max(1, Number(target.value) || 1);
       else state.llm[field] = target.value;
     }
@@ -241,8 +268,6 @@
     state = defaults();
     byId("pipe-gpu-select").addEventListener("change", (event) => { state.gpu = event.target.value; render(); });
     byId("pipe-qty-select").addEventListener("change", (event) => { state.quantity = Number(event.target.value); render(); });
-    byId("pipe-runtime-select").addEventListener("change", (event) => { state.runtime = event.target.value; render(); });
-    byId("pipe-kv-select").addEventListener("change", (event) => { state.kvBits = Number(event.target.value); render(); });
     byId("pipe-headroom-select").addEventListener("change", (event) => { state.headroom = Number(event.target.value); render(); });
     byId("pipe-bw-util-select").addEventListener("change", (event) => { state.util = event.target.value; render(); });
     byId("pipe-prompt-select").addEventListener("change", (event) => { state.promptTokens = Number(event.target.value); render(); });

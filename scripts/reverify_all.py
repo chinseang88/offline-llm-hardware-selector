@@ -301,8 +301,11 @@ def check_wiring(report):
     unbalanced = [tag for tag in ("section", "details", "dialog", "table", "main", "header", "aside", "nav") if tags[("", tag)] != tags[("/", tag)]]
     report.check(group, "structural tags are balanced", not unbalanced, sample(unbalanced))
     report.check(group, "page sets its theme before first paint", "dataset.theme" in html.split("</head>")[0] and 'id="theme-toggle"' in html)
-    for name in ("runtime-select", "hardware-runtime-select", "pipe-runtime-select", "task-select", "hardware-task-select"):
+    for name in ("runtime-select", "hardware-runtime-select", "task-select", "hardware-task-select"):
         report.check(group, f"{name} is filled from the data tables", re.search(rf'"{name}"', all_js) is not None)
+    stage_fields = re.findall(r'data-field=\\?"(runtime|kvBits)\\?"', scripts["pipeline.js"])
+    report.check(group, "Multi-LLM runtime and KV cache are set inside the stages", {"runtime", "kvBits"} <= set(stage_fields) and "ctx.runtimes()" in scripts["pipeline.js"]
+                 and not {"pipe-runtime-select", "pipe-kv-select"} & id_set, sorted(set(stage_fields)))
 
 
 # --------------------------------------------------------------------- themes
@@ -515,6 +518,26 @@ def check_formulas(report, tables):
     near("pipeline TTFT one-at-a-time does not share prefill inside a set", one_at_a_time["llms"][0]["ttftLoaded"], 2048 / (0.35 * 100 * 1000 / 8) + 1 / 40)
     report.check(group, "pipeline TTFT is unknown without a compute figure", got["ttftWorstLoaded"] is None and got["llms"][0]["ttftAlone"] is None)
 
+    # Per-stage runtime and KV cache: each stage's bandwidth is counted at the accelerator, divided by its own runtime efficiency.
+    one_llm = args["llms"][3:]
+    shared = run_pipeline(dict(args, llms=[dict(one_llm[0], target=20)]))
+    per_stage = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=0.5) for stage in args["voice"]], llms=[dict(one_llm[0], target=20, utilization=0.5, kvBits=16)]))
+    report.check(group, "stage runtimes: the same runtime in every stage equals the shared setting",
+                 (per_stage["sets"], per_stage["setsByMemory"], per_stage["setsByBandwidth"], per_stage["llms"][0]["status"]) == (shared["sets"], shared["setsByMemory"], shared["setsByBandwidth"], shared["llms"][0]["status"])
+                 and close(per_stage["setRawBwGbps"], shared["setBwGbps"] / 0.5) and close(per_stage["llms"][0]["tokAlone"], shared["llms"][0]["tokAlone"]))
+    mixed = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=u) for stage, u in zip(args["voice"], (0.6, 0.5, 0.55))], llms=[dict(one_llm[0], target=20, utilization=0.75, kvBits=8)]))
+    near("stage runtimes: bandwidth per set = sum of stage bandwidth / stage runtime efficiency", mixed["setRawBwGbps"], 5 / 0.6 + 5 / 0.5 + 5 / 0.55 + 337.84 / 0.75)
+    report.check(group, "stage runtimes: sets by bandwidth = accelerator bandwidth / bandwidth per set", mixed["setsByBandwidth"] == math.floor(1712 / mixed["setRawBwGbps"]) == 3, mixed["setsByBandwidth"])
+    near("stage runtimes: the LLM alone decodes on the bandwidth the voice stages leave", mixed["llms"][0]["tokAlone"], (1712 - mixed["voiceRawBwGbps"]) * 0.75 / 16.892)
+    near("stage KV cache: an LLM's own KV bits size its cache", mixed["llms"][0]["kvOverhead"], F.kv_per_token_gb(one_llm[0]["model"], 8) * 8192 + 16.892 * F.RUNTIME_SHARE)
+    report.check(group, "stage KV cache: 8-bit is smaller than the shared 16-bit", mixed["llms"][0]["kvOverhead"] < shared["llms"][0]["kvOverhead"] and mixed["llms"][0]["kvBits"] == 8)
+    no_llm_runtime = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=0.5) for stage in args["voice"]], llms=[dict(one_llm[0], utilization=0)]))
+    report.check(group, "stage runtimes: an LLM runtime that does not run gives no answer", no_llm_runtime["llms"][0]["status"] == "REVIEW: RUNTIME" and no_llm_runtime["sets"] is None and no_llm_runtime["verdict"].startswith("REVIEW: pick a runtime"))
+    no_voice_runtime = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=0 if index == 2 else 0.5) for index, stage in enumerate(args["voice"])], llms=[dict(one_llm[0], utilization=0.5)]))
+    report.check(group, "stage runtimes: a voice runtime that does not run gives no answer", no_voice_runtime["voice"][2]["status"] == "REVIEW: RUNTIME" and no_voice_runtime["sets"] is None)
+    on_cpu = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=0, placement="CPU") if index == 2 else dict(stage, utilization=0.5) for index, stage in enumerate(args["voice"])], llms=[dict(one_llm[0], target=20, utilization=0.5)]))
+    report.check(group, "stage runtimes: a stage on the CPU needs no accelerator runtime", on_cpu["voice"][2]["status"] == "CPU - not sized" and on_cpu["sets"] is not None and close(on_cpu["voiceRawBwGbps"], 20))
+
     catalog = load_rows("models")
     sized = [m for m in catalog if F.has_sizing_specs(m)]
     bad = [m["Model"] for m in sized if not (0 < F.memory_need(m, 4.85, 8192)["total"] < 5000)]
@@ -532,12 +555,13 @@ def flatten_pipeline(result):
     out = [result["usableGb"], result["effectiveBwGbps"], result["voiceWeightsGb"], result["voiceExtraGb"], result["voiceMemoryGb"], result["voiceBwGbps"],
            result["voicePending"], result["memoryUsedGb"], result["memoryMarginGb"], result["bwRequiredGbps"], result["llmsUsed"], result["llmsFit"],
            flag(result["allFit"]), result["verdict"],
-           result["setMemoryGb"], result["setBwGbps"], result["setsByMemory"], result["setsByBandwidth"], result["sets"], result["setsLimit"], result["ttftWorstLoaded"]]
+           result["setMemoryGb"], result["setBwGbps"], result["setsByMemory"], result["setsByBandwidth"], result["sets"], result["setsLimit"], result["ttftWorstLoaded"],
+           result["rawBwGbps"], result["voiceRawBwGbps"], result["setRawBwGbps"]]
     for row in result["voice"]:
-        out += [row["placement"], row["weightsGb"], row["extraGb"], row["bwGbps"], row["status"]]
+        out += [row["placement"], row["weightsGb"], row["extraGb"], row["bwGbps"], row["status"], row["utilization"], row["rawBwGbps"]]
     for row in result["llms"]:
         out += [row["status"], row["weights"], row["kvOverhead"], row["total"], row["bwNeeded"], row["cumulativeMemory"], row["cumulativeBw"], flag(row["fitsAlone"]), row["tokAlone"],
-                row["target"], row["prefillAlone"], row["ttftAlone"], row["ttftLoaded"]]
+                row["target"], row["prefillAlone"], row["ttftAlone"], row["ttftLoaded"], row["utilization"], row["kvBits"], row["rawBwNeeded"], row["cumulativeRawBw"]]
     return out
 
 
@@ -656,6 +680,11 @@ def build_cases():
     add("pipelineFit", **dict(args, activity="sequential", quantity=2, kvBits=8, headroomPct=5))
     add("pipelineFit", **dict(args, memoryGb=24, bandwidthGbps=456, utilization=0.5))
     add("pipelineFit", **dict(args, utilization=0))
+    staged = [dict(stage, utilization=u) for stage, u in zip(args["voice"], (0.6, 0.5, 0.55))]
+    add("pipelineFit", **dict(args, utilization=None, voice=staged, llms=[dict(args["llms"][3], target=20, utilization=0.75, kvBits=8)], tflops=310, promptTokens=2048))
+    add("pipelineFit", **dict(args, voice=staged, llms=[dict(slot, utilization=u, kvBits=kv) for slot, u, kv in zip(args["llms"], (0.5, 0.65, 0.8, 0.45), (4, 8, 16, 8))]))
+    add("pipelineFit", **dict(args, utilization=None, voice=[dict(staged[0], utilization=0), *staged[1:]], llms=[dict(args["llms"][0], utilization=0.5)]))
+    add("pipelineFit", **dict(args, utilization=None, voice=staged, llms=[dict(args["llms"][0], utilization=0), dict(args["llms"][1], utilization=0.6)], activity="sequential"))
     add("pipelineFit", **dict(args, voice=[dict(args["voice"][0], placement="CPU"), *args["voice"][1:]],
                               llms=[{"model": sized[0], "bits": 4.85, "context": 262144, "target": 20}, {"model": None, "bits": 4.85, "context": 8192, "target": 20},
                                     {"model": sized[-1], "bits": 0, "context": 8192, "target": 20}, {"model": sized[len(sized) // 2], "bits": 8.5, "context": 4096, "target": 5}]))

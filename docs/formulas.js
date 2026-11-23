@@ -257,65 +257,87 @@
 
   // Workbook "Multi-Stage Pipeline Fit": voice stages reserve first, then LLM slots are checked cumulatively.
   // One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
+  // A stage may give its own utilization (its runtime's bandwidth efficiency) and an LLM its own kvBits; both fall back to the shared inputs.
   function pipelineFit(input) {
     const o = input || {};
     const quantity = Math.max(1, positive(o.quantity) || 1);
     const headroom = Math.max(0, num(o.headroomPct) || 0);
     const usable = positive(o.memoryGb) * quantity * (1 - headroom / 100);
-    const effectiveBw = positive(o.bandwidthGbps) * quantityScale(quantity) * positive(o.utilization);
-    const kvBits = positive(o.kvBits) || 16;
+    const rawBw = positive(o.bandwidthGbps) * quantityScale(quantity);
+    const sharedUtil = positive(o.utilization);
+    const effectiveBw = rawBw * sharedUtil;
+    const sharedKvBits = positive(o.kvBits) || 16;
+    const ownUtil = (stage) => stage.utilization !== undefined && stage.utilization !== null;
+    const utilOf = (stage) => (ownUtil(stage) ? positive(stage.utilization) : sharedUtil);
+    const stageUtils = (o.voice || []).some(ownUtil) || (o.llms || []).some(ownUtil);
     const sequential = o.activity === "sequential";
     const promptTokens = positive(o.promptTokens);
 
     let voiceWeights = 0;
     let voiceExtra = 0;
     let voiceBw = 0;
+    let voiceRaw = 0;
     let pending = 0;
+    let runtimeReviews = 0;
     const voice = (o.voice || []).map((stage) => {
       const onGpu = stage.placement !== "CPU";
       const weights = onGpu ? (Number.isFinite(num(stage.weightsGb)) ? num(stage.weightsGb) : null) : 0;
       const extra = onGpu ? Math.max(0, num(stage.extraGb) || 0) : 0;
       const bw = onGpu ? Math.max(0, num(stage.bwGbps) || 0) : 0;
-      const status = !onGpu ? "CPU - not sized" : weights === null ? "WEIGHTS PENDING" : "INPUTS SET";
-      if (status === "WEIGHTS PENDING") pending += 1;
+      const util = onGpu ? utilOf(stage) : 0;
+      const raw = util > 0 ? bw / util : 0;
+      const status = !onGpu ? "CPU - not sized" : util <= 0 ? "REVIEW: RUNTIME" : weights === null ? "WEIGHTS PENDING" : "INPUTS SET";
+      if (onGpu && weights === null) pending += 1;
+      if (status === "REVIEW: RUNTIME") runtimeReviews += 1;
       voiceWeights += weights || 0;
       voiceExtra += extra;
       voiceBw += bw;
-      return { stage: stage.stage, name: stage.name, placement: onGpu ? "GPU" : "CPU", weightsGb: weights, extraGb: extra, bwGbps: bw, status };
+      voiceRaw += raw;
+      return { stage: stage.stage, name: stage.name, placement: onGpu ? "GPU" : "CPU", weightsGb: weights, extraGb: extra, bwGbps: bw, utilization: util, rawBwGbps: raw, status };
     });
     const voiceMemory = voiceWeights + voiceExtra;
 
     let memory = voiceMemory;
     let bwSum = 0;
     let bwMax = 0;
+    let rawSum = 0;
+    let rawMax = 0;
     let fits = 0;
     let used = 0;
     const llms = (o.llms || []).map((slot, index) => {
       const model = slot.model;
-      if (!model) return { slot: index + 1, model: null, status: "UNUSED", weights: 0, kvOverhead: 0, total: 0, bwNeeded: 0, cumulativeMemory: memory, cumulativeBw: voiceBw + (sequential ? bwMax : bwSum), fitsAlone: null, tokAlone: null, target: 0, prefillAlone: null, ttftAlone: null, ttftLoaded: null };
+      if (!model) return { slot: index + 1, model: null, status: "UNUSED", weights: 0, kvOverhead: 0, total: 0, bwNeeded: 0, cumulativeMemory: memory, cumulativeBw: voiceBw + (sequential ? bwMax : bwSum), fitsAlone: null, tokAlone: null, target: 0, prefillAlone: null, ttftAlone: null, ttftLoaded: null, utilization: 0, kvBits: 0, rawBwNeeded: 0, cumulativeRawBw: voiceRaw + (sequential ? rawMax : rawSum) };
       used += 1;
       const bits = positive(slot.bits);
       const context = positive(slot.context);
       const target = positive(slot.target);
+      const util = utilOf(slot);
+      const kvBits = positive(slot.kvBits) || sharedKvBits;
       const weights = positive(model["Total params (B)"]) * bits / 8 * WEIGHT_MARGIN;
       const kvOverhead = kvPerTokenGb(model, kvBits) * context + weights * RUNTIME_SHARE;
       const total = weights + kvOverhead;
       const perToken = positive(model["Active params (B)"]) * bits / 8 * WEIGHT_MARGIN;
       const bwNeeded = perToken * target;
+      const rawNeeded = util > 0 ? bwNeeded / util : 0;
       memory += total;
       bwSum += bwNeeded;
       bwMax = Math.max(bwMax, bwNeeded);
+      rawSum += rawNeeded;
+      rawMax = Math.max(rawMax, rawNeeded);
       const cumulativeBw = voiceBw + (sequential ? bwMax : bwSum);
+      const cumulativeRaw = voiceRaw + (sequential ? rawMax : rawSum);
       const limit = positive(model["Max context"]);
       let status = "FITS";
       if (!bits || !context || !target) status = "REVIEW: CHECK INPUTS";
       else if (!hasSizingSpecs(model)) status = "REVIEW: MODEL SPECS MISSING";
       else if (limit && context > limit) status = "REVIEW: CONTEXT > MODEL LIMIT";
+      else if (util <= 0) status = "REVIEW: RUNTIME";
       else if (memory > usable) status = "NO - GPU MEMORY";
-      else if (cumulativeBw > effectiveBw) status = "NO - BANDWIDTH";
+      else if (cumulativeRaw > rawBw) status = "NO - BANDWIDTH";
       const review = status.startsWith("REVIEW");
       if (status === "FITS") fits += 1;
-      const tokAlone = review || !perToken ? null : Math.max(0, effectiveBw - voiceBw) / perToken;
+      if (status === "REVIEW: RUNTIME") runtimeReviews += 1;
+      const tokAlone = review || !perToken ? null : Math.max(0, rawBw - voiceRaw) * util / perToken;
       const prefillAlone = review ? null : prefillTokPerSecond({ activeParamsB: model["Active params (B)"], tflops: o.tflops, quantity, mfu: o.mfu }) || null;
       return {
         slot: index + 1, model: model.Model, status, weights, kvOverhead, total, bwNeeded,
@@ -324,18 +346,22 @@
         tokAlone, target, prefillAlone,
         ttftAlone: timeToFirstToken({ promptTokens, prefillTokPerSecond: prefillAlone, decodeTokPerSecond: tokAlone }),
         ttftLoaded: null,
+        utilization: util, kvBits, rawBwNeeded: rawNeeded, cumulativeRawBw: cumulativeRaw,
       };
     });
     const bwRequired = voiceBw + (sequential ? bwMax : bwSum);
+    const rawRequired = voiceRaw + (sequential ? rawMax : rawSum);
     const reviews = llms.filter((row) => row.status.startsWith("REVIEW")).length;
     let verdict = "INPUTS SET";
-    if (usable <= 0 || effectiveBw <= 0) verdict = "REVIEW: select accelerator, quantity, headroom and utilization";
+    if (usable <= 0 || rawBw <= 0 || (!stageUtils && sharedUtil <= 0)) verdict = "REVIEW: select accelerator, quantity, headroom and utilization";
+    else if (runtimeReviews) verdict = "REVIEW: pick a runtime that runs on this accelerator";
     else if (reviews) verdict = "REVIEW: fix LLM inputs";
 
     // Concurrent sets: every set needs its own memory and bandwidth; the smaller limit wins.
+    // Bandwidth is counted at the accelerator: each stage's need divided by its runtime's bandwidth efficiency.
     const countable = verdict === "INPUTS SET" && memory > 0;
     const setsByMemory = countable ? Math.floor(usable / memory + 1e-9) : null;
-    const setsByBandwidth = countable && bwRequired > 0 ? Math.floor(effectiveBw / bwRequired + 1e-9) : null;
+    const setsByBandwidth = countable && rawRequired > 0 ? Math.floor(rawBw / rawRequired + 1e-9) : null;
     const sets = !countable ? null : setsByBandwidth === null ? setsByMemory : Math.min(setsByMemory, setsByBandwidth);
     const setsLimit = sets === null ? null : setsByBandwidth === null || setsByMemory < setsByBandwidth ? "memory" : setsByBandwidth < setsByMemory ? "bandwidth" : "memory and bandwidth";
 
@@ -353,6 +379,7 @@
       memoryUsedGb: memory, memoryMarginGb: usable - memory, bwRequiredGbps: bwRequired,
       llmsUsed: used, llmsFit: fits, allFit: verdict === "INPUTS SET" && used > 0 && fits === used, verdict,
       setMemoryGb: memory, setBwGbps: bwRequired, setsByMemory, setsByBandwidth, sets, setsLimit, ttftWorstLoaded: ttftWorst,
+      rawBwGbps: rawBw, voiceRawBwGbps: voiceRaw, setRawBwGbps: rawRequired,
     };
   }
 

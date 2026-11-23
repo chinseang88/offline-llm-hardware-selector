@@ -19,12 +19,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123-ttftguide">
+  <link rel="stylesheet" href="styles.css?v=20261123-stageruntime">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="formulas.js?v=20261123-ttftguide" defer></script>
-  <script src="theme.js?v=20261123-ttftguide" defer></script>
-  <script src="pipeline.js?v=20261123-ttftguide" defer></script>
-  <script src="app.js?v=20261123-ttftguide" defer></script>
+  <script src="formulas.js?v=20261123-stageruntime" defer></script>
+  <script src="theme.js?v=20261123-stageruntime" defer></script>
+  <script src="pipeline.js?v=20261123-stageruntime" defer></script>
+  <script src="app.js?v=20261123-stageruntime" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -227,15 +227,13 @@
       <div class="control-strip pipeline-hw-strip">
         <label class="control"><span>Accelerator</span><select id="pipe-gpu-select" aria-label="Pipeline GPU"></select></label>
         <label class="control"><span>Quantity</span><select id="pipe-qty-select"><option selected>1</option><option>2</option><option>4</option><option>8</option></select></label>
-        <label class="control"><span>Runtime</span><select id="pipe-runtime-select"><option>llama.cpp</option><option>Ollama</option><option>LM Studio</option><option>vLLM</option><option>SGLang</option><option>TensorRT-LLM</option><option>ExLlamaV2 / V3</option><option>MLX / mlx-lm</option><option>OpenVINO GenAI</option><option>IPEX-LLM</option></select></label>
-        <label class="control"><span>KV bits</span><select id="pipe-kv-select"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16" selected>16-bit FP16</option></select></label>
         <label class="control"><span>Headroom</span><select id="pipe-headroom-select"><option value="0">0%</option><option value="5">5%</option><option value="8">8%</option><option value="10" selected>10%</option><option value="15">15%</option><option value="20">20%</option></select></label>
         <label class="control"><span>Prompt tokens</span><select id="pipe-prompt-select"><option>128</option><option>512</option><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option><option>16384</option><option>32768</option></select></label>
       </div>
 
       <div class="secondary-filters">
         <button class="intel-only" id="pipe-intel-only-toggle" aria-pressed="false"><i data-lucide="cpu"></i><span>Intel products only</span></button>
-        <label>BW utilization <select id="pipe-bw-util-select"><option value="auto" selected>Auto (from runtime)</option><option value="0.4">40%</option><option value="0.5">50%</option><option value="0.55">55%</option><option value="0.6">60%</option><option value="0.7">70%</option><option value="0.8">80%</option></select></label>
+        <label>BW utilization <select id="pipe-bw-util-select"><option value="auto" selected>Auto (each stage’s runtime)</option><option value="0.4">40%</option><option value="0.5">50%</option><option value="0.55">55%</option><option value="0.6">60%</option><option value="0.7">70%</option><option value="0.8">80%</option></select></label>
         <button class="reset-button" id="pipe-reset" type="button"><i data-lucide="rotate-ccw"></i><span>Reset stages</span></button>
       </div>
 
@@ -243,7 +241,7 @@
 
       <section class="pipeline-summary" id="pipeline-summary" aria-label="Stage 5: concurrent sets" aria-live="polite"></section>
 
-      <p class="table-note"><i data-lucide="activity"></i> One set is Stage 1 to 4: VAD, diarization, speech recognition and one LLM, with its own copy of every model. Stage 5 = the smaller of usable memory ÷ memory per set and effective bandwidth ÷ bandwidth per set, using the formulas of the workbook’s Multi-Stage Pipeline Fit and Concurrent Model Selector sheets. The 5 GB activation reserve and 5 GB/s per voice stage are planning assumptions: replace them with measurements. Time to first token covers the LLM only; voice-stage latency is not modelled.</p>
+      <p class="table-note"><i data-lucide="activity"></i> One set is Stage 1 to 4: VAD, diarization, speech recognition and one LLM, with its own copy of every model. Each stage has its own runtime, and the LLM its own KV cache precision. Stage 5 = the smaller of usable memory ÷ memory per set and accelerator bandwidth ÷ bandwidth per set, where each stage’s bandwidth is divided by the bandwidth efficiency of its runtime on this accelerator. The formulas are those of the workbook’s Multi-Stage Pipeline Fit and Concurrent Model Selector sheets, which use one runtime for every stage. The runtime list is the LLM runtime table: for a voice stage choose the closest backend. Voice models have no KV geometry in the catalog, so their cache is part of the activation reserve. The 5 GB activation reserve and 5 GB/s per voice stage are planning assumptions: replace them with measurements. Time to first token covers the LLM only; voice-stage latency is not modelled.</p>
     </section>
 
     <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
@@ -313,7 +311,7 @@
         <article><span>03</span><h3>Decode</h3><code>runtime efficiency × bandwidth / (active params × bits / 8) / users</code><p>Efficiency comes from the runtime table for the hardware class. Each extra identical card adds 80% of its bandwidth.</p></article>
         <article><span>04</span><h3>CPU offload</h3><code>1 / (bytes per token × (GPU share / GPU rate + CPU share / CPU rate))</code><p>When a model spills past GPU memory, the overflow runs from host RAM (installed RAM minus 8 GB) at CPU speed. Only llama.cpp, Ollama, LM Studio and IPEX-LLM split a model this way.</p></article>
         <article><span>05</span><h3>Time to first token</h3><code>prompt tokens / (0.35 × TFLOPS × 1000 / (2 × active params) / users) + 1 / decode tok/s</code><p>Prefill is compute-bound, so it uses a compute estimate per GPU or CPU (CPUs at 60% of it). The estimates are planning figures without a vendor source. A row without a workbook estimate, such as pre-release hardware, uses a figure derived from its published columns: bandwidth × the median TFLOPS per GB/s of the same vendor’s accelerators, or cores × the median TFLOPS per core of the same CPU class. Such rows are marked “derived compute”.</p></article>
-        <article><span>06</span><h3>Concurrent sets</h3><code>min(usable memory / memory per set, effective bandwidth / bandwidth per set)</code><p>On the Multi-LLM tab one set is Stage 1 to 4 (VAD, diarization, speech recognition and one LLM) with its own copy of every model, and Stage 5 reports the count. With every set busy, the LLMs share the prefill compute.</p></article>
+        <article><span>06</span><h3>Concurrent sets</h3><code>min(usable memory / memory per set, accelerator bandwidth / sum of (stage bandwidth / stage runtime efficiency))</code><p>On the Multi-LLM tab one set is Stage 1 to 4 (VAD, diarization, speech recognition and one LLM) with its own copy of every model, and Stage 5 reports the count. Each stage picks its own runtime, so its bandwidth need is divided by that runtime’s efficiency on the accelerator. With every set busy, the LLMs share the prefill compute.</p></article>
       </div>
     </section>
   </main>
