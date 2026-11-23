@@ -537,6 +537,12 @@ def check_formulas(report, tables):
     report.check(group, "stage runtimes: a voice runtime that does not run gives no answer", no_voice_runtime["voice"][2]["status"] == "REVIEW: RUNTIME" and no_voice_runtime["sets"] is None)
     on_cpu = run_pipeline(dict(args, utilization=None, voice=[dict(stage, utilization=0, placement="CPU") if index == 2 else dict(stage, utilization=0.5) for index, stage in enumerate(args["voice"])], llms=[dict(one_llm[0], target=20, utilization=0.5)]))
     report.check(group, "stage runtimes: a stage on the CPU needs no accelerator runtime", on_cpu["voice"][2]["status"] == "CPU - not sized" and on_cpu["sets"] is not None and close(on_cpu["voiceRawBwGbps"], 20))
+    voice_kv = run_pipeline(dict(args, voice=[dict(stage, kvBits=bits) for stage, bits in zip(args["voice"], (16, 8, 4))], llms=[dict(one_llm[0], target=20)]))
+    report.check(group, "stage KV cache: a voice stage's reserve scales with its own KV bits (FP16 = as entered)", [row["extraGb"] for row in voice_kv["voice"]] == [5, 2.5, 1.25] and [row["kvBits"] for row in voice_kv["voice"]] == [16, 8, 4])
+    near("stage KV cache: memory per set drops by the reserve saved", shared["setMemoryGb"] - voice_kv["setMemoryGb"], 2.5 + 3.75)
+    report.check(group, "stage KV cache: FP16 in every voice stage equals the workbook reserve", close(shared["voiceMemoryGb"], want["voiceMemoryGb"]) and all(row["kvBits"] == 16 for row in shared["voice"])
+                 and close(run_pipeline(dict(args, voice=[dict(stage, kvBits=16) for stage in args["voice"]]))["voiceMemoryGb"], want["voiceMemoryGb"]))
+    report.check(group, "stage KV cache: the shared LLM setting does not change a voice stage", close(run_pipeline(dict(args, kvBits=8))["voiceMemoryGb"], want["voiceMemoryGb"]))
 
     catalog = load_rows("models")
     sized = [m for m in catalog if F.has_sizing_specs(m)]
@@ -558,7 +564,7 @@ def flatten_pipeline(result):
            result["setMemoryGb"], result["setBwGbps"], result["setsByMemory"], result["setsByBandwidth"], result["sets"], result["setsLimit"], result["ttftWorstLoaded"],
            result["rawBwGbps"], result["voiceRawBwGbps"], result["setRawBwGbps"]]
     for row in result["voice"]:
-        out += [row["placement"], row["weightsGb"], row["extraGb"], row["bwGbps"], row["status"], row["utilization"], row["rawBwGbps"]]
+        out += [row["placement"], row["weightsGb"], row["extraGb"], row["bwGbps"], row["status"], row["utilization"], row["rawBwGbps"], row["kvBits"]]
     for row in result["llms"]:
         out += [row["status"], row["weights"], row["kvOverhead"], row["total"], row["bwNeeded"], row["cumulativeMemory"], row["cumulativeBw"], flag(row["fitsAlone"]), row["tokAlone"],
                 row["target"], row["prefillAlone"], row["ttftAlone"], row["ttftLoaded"], row["utilization"], row["kvBits"], row["rawBwNeeded"], row["cumulativeRawBw"]]
@@ -680,7 +686,7 @@ def build_cases():
     add("pipelineFit", **dict(args, activity="sequential", quantity=2, kvBits=8, headroomPct=5))
     add("pipelineFit", **dict(args, memoryGb=24, bandwidthGbps=456, utilization=0.5))
     add("pipelineFit", **dict(args, utilization=0))
-    staged = [dict(stage, utilization=u) for stage, u in zip(args["voice"], (0.6, 0.5, 0.55))]
+    staged = [dict(stage, utilization=u, kvBits=bits) for stage, u, bits in zip(args["voice"], (0.6, 0.5, 0.55), (16, 8, 4))]
     add("pipelineFit", **dict(args, utilization=None, voice=staged, llms=[dict(args["llms"][3], target=20, utilization=0.75, kvBits=8)], tflops=310, promptTokens=2048))
     add("pipelineFit", **dict(args, voice=staged, llms=[dict(slot, utilization=u, kvBits=kv) for slot, u, kv in zip(args["llms"], (0.5, 0.65, 0.8, 0.45), (4, 8, 16, 8))]))
     add("pipelineFit", **dict(args, utilization=None, voice=[dict(staged[0], utilization=0), *staged[1:]], llms=[dict(args["llms"][0], utilization=0.5)]))
@@ -713,7 +719,7 @@ def check_parity(report):
         return 0
     answer = json.loads(run.stdout)
     constants = answer["constants"]
-    for name in ("WEIGHT_MARGIN", "RUNTIME_SHARE", "DEFAULT_HEADROOM_PCT", "EXTRA_CARD_SCALE", "HOST_RESERVE_GB", "VOICE_EXTRA_GB", "VOICE_BW_GBPS",
+    for name in ("WEIGHT_MARGIN", "RUNTIME_SHARE", "DEFAULT_HEADROOM_PCT", "EXTRA_CARD_SCALE", "HOST_RESERVE_GB", "VOICE_EXTRA_GB", "VOICE_BW_GBPS", "VOICE_RESERVE_BITS",
                  "PREFILL_MFU", "CPU_PREFILL_FACTOR", "PREFILL_GFLOPS_PER_B"):
         report.check(group, f"constant {name} is identical", constants[name] == getattr(F, name), f"js {constants[name]} vs py {getattr(F, name)}")
     report.check(group, "CPU-offload runtime list is identical", constants["OFFLOAD_RUNTIMES"] == list(F.OFFLOAD_RUNTIMES))

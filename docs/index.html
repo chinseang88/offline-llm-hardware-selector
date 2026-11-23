@@ -19,12 +19,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123-stageruntime">
+  <link rel="stylesheet" href="styles.css?v=20261123-stagekv">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="formulas.js?v=20261123-stageruntime" defer></script>
-  <script src="theme.js?v=20261123-stageruntime" defer></script>
-  <script src="pipeline.js?v=20261123-stageruntime" defer></script>
-  <script src="app.js?v=20261123-stageruntime" defer></script>
+  <script src="formulas.js?v=20261123-stagekv" defer></script>
+  <script src="theme.js?v=20261123-stagekv" defer></script>
+  <script src="pipeline.js?v=20261123-stagekv" defer></script>
+  <script src="app.js?v=20261123-stagekv" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -241,7 +241,7 @@
 
       <section class="pipeline-summary" id="pipeline-summary" aria-label="Stage 5: concurrent sets" aria-live="polite"></section>
 
-      <p class="table-note"><i data-lucide="activity"></i> One set is Stage 1 to 4: VAD, diarization, speech recognition and one LLM, with its own copy of every model. Each stage has its own runtime, and the LLM its own KV cache precision. Stage 5 = the smaller of usable memory ÷ memory per set and accelerator bandwidth ÷ bandwidth per set, where each stage’s bandwidth is divided by the bandwidth efficiency of its runtime on this accelerator. The formulas are those of the workbook’s Multi-Stage Pipeline Fit and Concurrent Model Selector sheets, which use one runtime for every stage. The runtime list is the LLM runtime table: for a voice stage choose the closest backend. Voice models have no KV geometry in the catalog, so their cache is part of the activation reserve. The 5 GB activation reserve and 5 GB/s per voice stage are planning assumptions: replace them with measurements. Time to first token covers the LLM only; voice-stage latency is not modelled.</p>
+      <p class="table-note"><i data-lucide="activity"></i> One set is Stage 1 to 4: VAD, diarization, speech recognition and one LLM, with its own copy of every model. Each stage has its own runtime and its own KV cache precision. Stage 5 = the smaller of usable memory ÷ memory per set and accelerator bandwidth ÷ bandwidth per set, where each stage’s bandwidth is divided by the bandwidth efficiency of its runtime on this accelerator. The formulas are those of the workbook’s Multi-Stage Pipeline Fit and Concurrent Model Selector sheets, which use one runtime for every stage. The runtime list is the LLM runtime table: for a voice stage choose the closest backend. The LLM’s KV cache is sized from its layers, heads and context. Voice models have no such geometry in the catalog, so a voice stage’s activation reserve is taken as its FP16 size and scales with the KV cache precision chosen in that stage (8-bit = half, 4-bit = a quarter). That scaling, the 5 GB reserve and 5 GB/s per voice stage are planning assumptions: replace them with measurements. Time to first token covers the LLM only; voice-stage latency is not modelled.</p>
     </section>
 
     <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
@@ -311,7 +311,7 @@
         <article><span>03</span><h3>Decode</h3><code>runtime efficiency × bandwidth / (active params × bits / 8) / users</code><p>Efficiency comes from the runtime table for the hardware class. Each extra identical card adds 80% of its bandwidth.</p></article>
         <article><span>04</span><h3>CPU offload</h3><code>1 / (bytes per token × (GPU share / GPU rate + CPU share / CPU rate))</code><p>When a model spills past GPU memory, the overflow runs from host RAM (installed RAM minus 8 GB) at CPU speed. Only llama.cpp, Ollama, LM Studio and IPEX-LLM split a model this way.</p></article>
         <article><span>05</span><h3>Time to first token</h3><code>prompt tokens / (0.35 × TFLOPS × 1000 / (2 × active params) / users) + 1 / decode tok/s</code><p>Prefill is compute-bound, so it uses a compute estimate per GPU or CPU (CPUs at 60% of it). The estimates are planning figures without a vendor source. A row without a workbook estimate, such as pre-release hardware, uses a figure derived from its published columns: bandwidth × the median TFLOPS per GB/s of the same vendor’s accelerators, or cores × the median TFLOPS per core of the same CPU class. Such rows are marked “derived compute”.</p></article>
-        <article><span>06</span><h3>Concurrent sets</h3><code>min(usable memory / memory per set, accelerator bandwidth / sum of (stage bandwidth / stage runtime efficiency))</code><p>On the Multi-LLM tab one set is Stage 1 to 4 (VAD, diarization, speech recognition and one LLM) with its own copy of every model, and Stage 5 reports the count. Each stage picks its own runtime, so its bandwidth need is divided by that runtime’s efficiency on the accelerator. With every set busy, the LLMs share the prefill compute.</p></article>
+        <article><span>06</span><h3>Concurrent sets</h3><code>min(usable memory / memory per set, accelerator bandwidth / sum of (stage bandwidth / stage runtime efficiency))</code><p>On the Multi-LLM tab one set is Stage 1 to 4 (VAD, diarization, speech recognition and one LLM) with its own copy of every model, and Stage 5 reports the count. Each stage picks its own runtime, so its bandwidth need is divided by that runtime’s efficiency on the accelerator, and its own KV cache precision. With every set busy, the LLMs share the prefill compute.</p></article>
       </div>
     </section>
   </main>

@@ -13,6 +13,7 @@
   const HOST_RESERVE_GB = 8;
   const VOICE_EXTRA_GB = 5;
   const VOICE_BW_GBPS = 5;
+  const VOICE_RESERVE_BITS = 16;
   const PREFILL_MFU = 0.35;
   const CPU_PREFILL_FACTOR = 0.6;
   const PREFILL_GFLOPS_PER_B = 2;
@@ -257,7 +258,8 @@
 
   // Workbook "Multi-Stage Pipeline Fit": voice stages reserve first, then LLM slots are checked cumulatively.
   // One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
-  // A stage may give its own utilization (its runtime's bandwidth efficiency) and an LLM its own kvBits; both fall back to the shared inputs.
+  // A stage may give its own utilization (its runtime's bandwidth efficiency) and its own kvBits; an LLM without them uses the shared inputs.
+  // A voice stage has no KV geometry: its reserve is entered at FP16 and scales with the stage's kvBits (planning assumption).
   function pipelineFit(input) {
     const o = input || {};
     const quantity = Math.max(1, positive(o.quantity) || 1);
@@ -282,7 +284,8 @@
     const voice = (o.voice || []).map((stage) => {
       const onGpu = stage.placement !== "CPU";
       const weights = onGpu ? (Number.isFinite(num(stage.weightsGb)) ? num(stage.weightsGb) : null) : 0;
-      const extra = onGpu ? Math.max(0, num(stage.extraGb) || 0) : 0;
+      const kvBits = positive(stage.kvBits) || VOICE_RESERVE_BITS;
+      const extra = onGpu ? Math.max(0, num(stage.extraGb) || 0) * kvBits / VOICE_RESERVE_BITS : 0;
       const bw = onGpu ? Math.max(0, num(stage.bwGbps) || 0) : 0;
       const util = onGpu ? utilOf(stage) : 0;
       const raw = util > 0 ? bw / util : 0;
@@ -293,7 +296,7 @@
       voiceExtra += extra;
       voiceBw += bw;
       voiceRaw += raw;
-      return { stage: stage.stage, name: stage.name, placement: onGpu ? "GPU" : "CPU", weightsGb: weights, extraGb: extra, bwGbps: bw, utilization: util, rawBwGbps: raw, status };
+      return { stage: stage.stage, name: stage.name, placement: onGpu ? "GPU" : "CPU", weightsGb: weights, extraGb: extra, bwGbps: bw, utilization: util, rawBwGbps: raw, kvBits, status };
     });
     const voiceMemory = voiceWeights + voiceExtra;
 
@@ -384,7 +387,7 @@
   }
 
   return {
-    WEIGHT_MARGIN, RUNTIME_SHARE, DEFAULT_HEADROOM_PCT, EXTRA_CARD_SCALE, HOST_RESERVE_GB, VOICE_EXTRA_GB, VOICE_BW_GBPS,
+    WEIGHT_MARGIN, RUNTIME_SHARE, DEFAULT_HEADROOM_PCT, EXTRA_CARD_SCALE, HOST_RESERVE_GB, VOICE_EXTRA_GB, VOICE_BW_GBPS, VOICE_RESERVE_BITS,
     PREFILL_MFU, CPU_PREFILL_FACTOR, PREFILL_GFLOPS_PER_B,
     OFFLOAD_RUNTIMES, HW_CLASSES, DEFAULT_TASK_RULES,
     hasSizingSpecs, kvPerTokenGb, memoryNeed, excelMemoryNeed, quantityScale, excelQuantityScale,

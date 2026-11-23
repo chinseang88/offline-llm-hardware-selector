@@ -18,6 +18,7 @@ EXTRA_CARD_SCALE = 0.8
 HOST_RESERVE_GB = 8
 VOICE_EXTRA_GB = 5
 VOICE_BW_GBPS = 5
+VOICE_RESERVE_BITS = 16
 PREFILL_MFU = 0.35
 CPU_PREFILL_FACTOR = 0.6
 PREFILL_GFLOPS_PER_B = 2
@@ -258,7 +259,8 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
     """Voice stages reserve first; LLM slots are then checked cumulatively in order.
 
     One set = Stage 1-4 with its own copy of every model (workbook "Concurrent Model Selector" convention).
-    A stage may give its own "utilization" (its runtime's bandwidth efficiency) and an LLM its own "kvBits"; both fall back to the shared inputs.
+    A stage may give its own "utilization" (its runtime's bandwidth efficiency) and its own "kvBits"; an LLM without them uses the shared inputs.
+    A voice stage has no KV geometry: its reserve is entered at FP16 and scales with the stage's kvBits (planning assumption).
     """
     quantity = max(1, positive(quantity) or 1)
     headroom = max(0.0, 0.0 if math.isnan(num(headroom_pct)) else num(headroom_pct))
@@ -278,7 +280,8 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
         on_gpu = stage.get("placement") != "CPU"
         given = num(stage.get("weightsGb"))
         weights = (None if math.isnan(given) else given) if on_gpu else 0.0
-        extra = max(0.0, positive(stage.get("extraGb"))) if on_gpu else 0.0
+        stage_kv_bits = positive(stage.get("kvBits")) or VOICE_RESERVE_BITS
+        extra = max(0.0, positive(stage.get("extraGb"))) * stage_kv_bits / VOICE_RESERVE_BITS if on_gpu else 0.0
         bw = max(0.0, positive(stage.get("bwGbps"))) if on_gpu else 0.0
         util = util_of(stage) if on_gpu else 0.0
         raw = bw / util if util > 0 else 0.0
@@ -290,7 +293,7 @@ def pipeline_fit(memory_gb, bandwidth_gbps, utilization, voice=(), llms=(), quan
         voice_bw += bw
         voice_raw += raw
         voice_rows.append({"stage": stage.get("stage"), "name": stage.get("name"), "placement": "GPU" if on_gpu else "CPU",
-                           "weightsGb": weights, "extraGb": extra, "bwGbps": bw, "utilization": util, "rawBwGbps": raw, "status": status})
+                           "weightsGb": weights, "extraGb": extra, "bwGbps": bw, "utilization": util, "rawBwGbps": raw, "kvBits": stage_kv_bits, "status": status})
     voice_memory = voice_weights + voice_extra
 
     memory = voice_memory

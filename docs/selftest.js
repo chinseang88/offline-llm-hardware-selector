@@ -326,8 +326,20 @@
     check("Multi-LLM page: Stage 4 holds exactly one LLM", all('#pipe-stage-cards [data-llm][data-field="model"]').length === 1 && result.llms.length === 1 && result.llmsUsed === 1);
     check("Multi-LLM page: Stage 5 follows the four stages and gives the concurrent sets", Boolean(byId("pipe-stage-cards").compareDocumentPosition(byId("pipeline-summary")) & Node.DOCUMENT_POSITION_FOLLOWING) && /^Stage 5/.test(answer()) && /concurrently/.test(answer()));
     check("Multi-LLM page: every stage has its own runtime, listed from the runtime table", runtimeSelects().length === 4 && stageCards().every((card) => card.querySelectorAll('select[data-field="runtime"]').length === 1) && runtimeSelects().every((select) => select.options.length === data.libraries.length));
-    check("Multi-LLM page: KV cache is set in the LLM stage, not in the top strip", stageCards()[3].querySelectorAll('select[data-field="kvBits"]').length === 1 && !document.querySelector("#pipe-kv-select, #pipe-runtime-select") && all(".pipeline-hw-strip select").length === 4);
-    check("Multi-LLM page: voice stages say how their cache is counted", stageCards().slice(0, 3).every((card) => /KV cache/.test(card.textContent) && card.querySelectorAll('[data-field="kvBits"]').length === 0) && /In the reserve/.test(stageCards()[2].textContent));
+    const kvSelects = () => all('#pipe-stage-cards select[data-field="kvBits"]');
+    check("Multi-LLM page: every stage has its own KV cache setting, none in the top strip", kvSelects().length === 4 && stageCards().every((card) => card.querySelectorAll('select[data-field="kvBits"]').length === 1) && kvSelects().every((select) => select.value === "16" && select.options.length === 3) && !document.querySelector("#pipe-kv-select, #pipe-runtime-select") && all(".pipeline-hw-strip select").length === 4);
+    change("pipe-stage-cards", '[data-voice="1"][data-field="kvBits"]', "8");
+    let tuned = pipeline.compute();
+    check("Multi-LLM page: diarization KV cache at 8-bit halves that stage's FP16 reserve only", pipeline.state.voice[1].kvBits === 8 && near(tuned.voice[1].extraGb, result.voice[1].extraGb / 2, 1e-12) && near(tuned.voice[0].extraGb, result.voice[0].extraGb, 1e-12) && near(tuned.voice[2].extraGb, result.voice[2].extraGb, 1e-12) && near(result.setMemoryGb - tuned.setMemoryGb, result.voice[1].extraGb / 2, 1e-9) && near(tuned.llms[0].kvOverhead, result.llms[0].kvOverhead, 1e-12));
+    check("Multi-LLM page: Stage 5 lists the KV cache of each stage when they differ", /KV cache by stage: VAD 16-bit, Diarization 8-bit, ASR 16-bit, LLM 16-bit/.test(answer()) && /at 8-bit/.test(stageCards()[1].textContent));
+    change("pipe-stage-cards", '[data-voice="0"][data-field="kvBits"]', "4");
+    change("pipe-stage-cards", '[data-voice="2"][data-field="kvBits"]', "4");
+    tuned = pipeline.compute();
+    check("Multi-LLM page: VAD and ASR KV cache can be set too", near(tuned.voice[0].extraGb, result.voice[0].extraGb / 4, 1e-12) && near(tuned.voice[2].extraGb, result.voice[2].extraGb / 4, 1e-12) && tuned.setsByMemory >= result.setsByMemory);
+    change("pipe-stage-cards", '[data-voice="1"][data-field="placement"]', "CPU");
+    check("Multi-LLM page: a stage on the CPU has no KV cache to set", stageCards()[1].querySelector('select[data-field="kvBits"]').disabled && pipeline.compute().voice[1].extraGb === 0);
+    byId("pipe-reset").click();
+    check("Multi-LLM page: FP16 in every stage is named in Stage 5", /KV cache 16-bit in every stage/.test(answer()));
     check("Multi-LLM page: usable memory is accelerator memory less headroom", near(result.usableGb, gpu["Memory (GB)"] * 0.9, 1e-6));
     check("Multi-LLM page: one set is Stages 1 to 3 plus the Stage 4 LLM", near(result.setMemoryGb, result.voiceMemoryGb + result.llms[0].total, 1e-9) && near(result.setBwGbps, result.voiceBwGbps + result.llms[0].bwNeeded, 1e-9));
     check("Multi-LLM page: each stage's bandwidth is divided by its runtime's efficiency", near(result.setRawBwGbps, result.voice.reduce((sum, row) => sum + row.bwGbps / useOf("llama.cpp"), 0) + result.llms[0].bwNeeded / useOf("llama.cpp"), 1e-9) && near(result.rawBwGbps, gpu["Bandwidth (GB/s)"], 1e-9));
@@ -336,7 +348,7 @@
     const baseSets = result.sets;
     const baseSetMemory = result.setMemoryGb;
     change("pipe-stage-cards", '[data-llm="0"][data-field="kvBits"]', "8");
-    check("Multi-LLM page: 8-bit KV in the LLM stage makes each set smaller than FP16", pipeline.compute().setMemoryGb < baseSetMemory && pipeline.compute().llms[0].kvBits === 8 && /LLM KV cache 8-bit/.test(answer()));
+    check("Multi-LLM page: 8-bit KV in the LLM stage makes each set smaller than FP16", pipeline.compute().setMemoryGb < baseSetMemory && pipeline.compute().llms[0].kvBits === 8 && /LLM 8-bit/.test(answer()));
     change("pipe-stage-cards", '[data-llm="0"][data-field="kvBits"]', "16");
     set("pipe-qty-select", 2);
     check("Multi-LLM page: two accelerators at least double the sets by memory", near(pipeline.compute().usableGb, gpu["Memory (GB)"] * 2 * 0.9, 1e-6) && pipeline.compute().setsByMemory >= result.setsByMemory * 2);
@@ -393,7 +405,7 @@
     set("pipe-gpu-select", smallest.Accelerator);
     check("Multi-LLM page: a small accelerator fits no set and names memory as the limit", pipeline.compute().sets === 0 && pipeline.compute().setsByMemory === 0 && pipeline.compute().llms[0].status === "NO - GPU MEMORY");
     byId("pipe-reset").click();
-    check("Multi-LLM page: Reset restores the defaults", pipeline.state.gpu === gpu.Accelerator && pipeline.compute().llmsUsed === 1 && pipeline.compute().sets === baseSets && pipeline.state.llm.runtime === "llama.cpp" && pipeline.state.llm.kvBits === 16 && pipeline.state.voice.every((stage) => stage.runtime === "llama.cpp"));
+    check("Multi-LLM page: Reset restores the defaults", pipeline.state.gpu === gpu.Accelerator && pipeline.compute().llmsUsed === 1 && pipeline.compute().sets === baseSets && pipeline.state.llm.runtime === "llama.cpp" && pipeline.state.llm.kvBits === 16 && pipeline.state.voice.every((stage) => stage.runtime === "llama.cpp" && stage.kvBits === 16));
 
     check("Multi-LLM page: the default accelerator reports time to first token", pipeline.compute().ttftWorstLoaded !== null && /first token with every set busy/.test(answer()) && /\d s/.test(all("#pipeline-summary .metric span")[2].textContent));
     check("Multi-LLM page: derived compute is named in Stage 5", app.computeDerived("GPUs", gpu.Accelerator) === /compute derived from bandwidth/.test(answer()));

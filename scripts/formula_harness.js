@@ -15,7 +15,7 @@ function pipeline(result) {
     result.memoryUsedGb, result.memoryMarginGb, result.bwRequiredGbps, result.llmsUsed, result.llmsFit, flag(result.allFit), result.verdict,
     result.setMemoryGb, result.setBwGbps, result.setsByMemory, result.setsByBandwidth, result.sets, result.setsLimit, result.ttftWorstLoaded,
     result.rawBwGbps, result.voiceRawBwGbps, result.setRawBwGbps,
-    ...result.voice.flatMap((row) => [row.placement, row.weightsGb, row.extraGb, row.bwGbps, row.status, row.utilization, row.rawBwGbps]),
+    ...result.voice.flatMap((row) => [row.placement, row.weightsGb, row.extraGb, row.bwGbps, row.status, row.utilization, row.rawBwGbps, row.kvBits]),
     ...result.llms.flatMap((row) => [row.status, row.weights, row.kvOverhead, row.total, row.bwNeeded, row.cumulativeMemory, row.cumulativeBw, flag(row.fitsAlone), row.tokAlone, row.target, row.prefillAlone, row.ttftAlone, row.ttftLoaded, row.utilization, row.kvBits, row.rawBwNeeded, row.cumulativeRawBw]),
   ];
 }
@@ -53,7 +53,7 @@ function run(testCase) {
 process.stdout.write(JSON.stringify({
   constants: {
     WEIGHT_MARGIN: MF.WEIGHT_MARGIN, RUNTIME_SHARE: MF.RUNTIME_SHARE, DEFAULT_HEADROOM_PCT: MF.DEFAULT_HEADROOM_PCT,
-    EXTRA_CARD_SCALE: MF.EXTRA_CARD_SCALE, HOST_RESERVE_GB: MF.HOST_RESERVE_GB, VOICE_EXTRA_GB: MF.VOICE_EXTRA_GB, VOICE_BW_GBPS: MF.VOICE_BW_GBPS,
+    EXTRA_CARD_SCALE: MF.EXTRA_CARD_SCALE, HOST_RESERVE_GB: MF.HOST_RESERVE_GB, VOICE_EXTRA_GB: MF.VOICE_EXTRA_GB, VOICE_BW_GBPS: MF.VOICE_BW_GBPS, VOICE_RESERVE_BITS: MF.VOICE_RESERVE_BITS,
     PREFILL_MFU: MF.PREFILL_MFU, CPU_PREFILL_FACTOR: MF.CPU_PREFILL_FACTOR, PREFILL_GFLOPS_PER_B: MF.PREFILL_GFLOPS_PER_B,
     OFFLOAD_RUNTIMES: MF.OFFLOAD_RUNTIMES, HW_CLASSES: MF.HW_CLASSES, DEFAULT_TASK_RULES: MF.DEFAULT_TASK_RULES,
   },
