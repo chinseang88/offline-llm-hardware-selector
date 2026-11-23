@@ -285,6 +285,11 @@ def check_wiring(report):
     tabs = set(re.findall(r'data-knowledge-page="([^"]+)"', html))
     panels = set(re.findall(r'data-knowledge-page-content="([^"]+)"', html))
     report.check(group, "every knowledge tab has a panel", tabs == panels, f"tabs {sorted(tabs)} vs panels {sorted(panels)}")
+    guide = re.search(r'data-knowledge-page-content="ttft".*?</section>', html, re.S)
+    constant = lambda name: (re.search(rf"const {name} = ([\d.]+);", scripts["formulas.js"]) or [None, "missing"])[1]
+    wanted = [f"{constant('PREFILL_GFLOPS_PER_B')} × active parameters", f"{constant('PREFILL_MFU')} × TFLOPS × 1000", f"× {constant('CPU_PREFILL_FACTOR')}", f"{constant('EXTRA_CARD_SCALE')} × (cards", "prompt tokens ÷ prefill tok/s + 1 ÷ decode tok/s"]
+    absent = [text for text in wanted if not guide or text not in guide.group(0)]
+    report.check(group, "Know more shows the first-token formula with the constants the scripts use", not absent, sample(absent))
     opened = set(re.findall(r'data-open-page="([^"]+)"', html))
     report.check(group, "in-page links open existing pages", opened <= set(pages), sample(sorted(opened - set(pages))))
     assets = re.findall(r'(?:src|href)="((?!https?:|#|\./)[^"]+)"', html)

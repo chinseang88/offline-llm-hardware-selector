@@ -463,6 +463,23 @@
       const panel = all("[data-knowledge-page-content]").find((view) => view.dataset.knowledgePageContent === tab.dataset.knowledgePage);
       check(`Know more page: ${tab.textContent.trim()} tab shows its panel`, panel && !panel.hidden && all("[data-knowledge-page-content]").filter((view) => !view.hidden).length === 1);
     }
+    const guide = document.querySelector('[data-knowledge-page-content="ttft"]');
+    const worked = byId("ttft-worked");
+    const workedTotal = () => number(worked.querySelector(".ttft-worked-total b").textContent);
+    const fastest = () => gpuRows().filter((row) => row.fits && row.ttft !== null).sort((a, b) => a.ttft - b.ttft)[0];
+    all(".knowledge-nav button").find((tab) => tab.dataset.knowledgePage === "ttft").click();
+    check("Know more page: Time to first token states the formula and its constants", /prompt tokens ÷ prefill tok\/s \+ 1 ÷ decode tok\/s/.test(guide.textContent) && guide.textContent.includes(`${MF.PREFILL_GFLOPS_PER_B} × active parameters`) && guide.textContent.includes(`${MF.PREFILL_MFU} × TFLOPS × 1000`) && guide.textContent.includes(`× ${MF.CPU_PREFILL_FACTOR}`) && guide.textContent.includes(`${MF.EXTRA_CARD_SCALE} × (cards`));
+    let best = fastest();
+    check("Know more page: the worked example is the fastest accelerator that fits", Boolean(best) && worked.textContent.includes(best.name) && worked.textContent.includes(state.model.Model) && near(workedTotal(), best.ttft, Math.max(0.006, best.ttft * 0.006)));
+    const byHand = state.promptTokens / (MF.PREFILL_MFU * app.tflopsFor("GPUs", best.value) * 1000 / (MF.PREFILL_GFLOPS_PER_B * state.model["Active params (B)"]) * MF.quantityScale(state.gpuQuantity) / state.users) + 1 / best.speed;
+    check("Know more page: the worked example equals the formula done by hand", best.gpuShare !== null || near(byHand, best.ttft, 1e-9), `${byHand} vs ${best.ttft}`);
+    const totalBefore = workedTotal();
+    set("prompt-length-input", 8192);
+    check("Know more page: the worked example follows the prompt length", /8,192 prompt tokens/.test(worked.textContent) && workedTotal() > totalBefore * 3);
+    set("prompt-length-input", 2048);
+    app.showPage("database");
+    byId("database-page").querySelector("[data-open-ttft-guide]").click();
+    check("Know more page: How this is calculated opens the first-token guide", state.page === "knowledge" && !guide.hidden && all("[data-knowledge-page-content]").filter((view) => !view.hidden).length === 1);
     all(".knowledge-nav button").find((tab) => tab.dataset.knowledgePage === "latest").click();
     const cards = all("#knowledge-latest-models .knowledge-model");
     check("Know more page: newest models are listed from the catalog", cards.length > 0 && cards.length === app.latestModels().length);
@@ -539,9 +556,10 @@
       check(`${name} theme: applied to the page`, root.dataset.theme === name && getComputedStyle(root).colorScheme.includes(name));
       check(`${name} theme: page background is ${name}`, name === "dark" ? luminance(pageColor) < 0.05 : luminance(pageColor) > 0.7, colors[name]);
       check(`${name} theme: browser toolbar colour follows the page`, document.querySelector('meta[name="theme-color"]').content.length > 3);
-      for (const page of pages) {
+      const views = [...pages.map((page) => ({ page, label: `${page} page` })), { page: "knowledge", topic: "ttft", label: "first-token guide" }];
+      for (const { page, topic, label } of views) {
         app.showPage(page);
-        if (page === "knowledge") all(".knowledge-nav button")[0].click();
+        if (page === "knowledge") all(".knowledge-nav button").find((tab) => tab.dataset.knowledgePage === (topic || "model360")).click();
         await tick();
         const scope = [document.querySelector(".site-header"), byId(`${page}-page`), ...(page === "model" ? [byId("method")] : [])];
         const candidates = scope.flatMap((host) => all("*", host)).filter((element) => hasOwnText(element) && element.getClientRects().length && !element.closest("option, [hidden]") && !element.disabled).slice(0, 900);
@@ -554,14 +572,15 @@
           if (ratio < 3 && !low.has(kind)) low.set(kind, `${describe(element)} ${ratio.toFixed(2)}:1`);
           else if (ratio >= 3 && ratio < 4.5) borderline += 1;
         }
-        check(`${name} theme: ${page} page text is readable (${candidates.length} elements)`, low.size === 0, [...low.values()].slice(0, 8).join(" | "));
-        if (borderline) note(`${name} theme: ${page} page`, `${borderline} of ${candidates.length} text elements sit between 3:1 and 4.5:1 contrast`);
-        check(`${name} theme: ${page} page does not scroll sideways`, document.documentElement.scrollWidth <= window.innerWidth + 1, `${document.documentElement.scrollWidth} > ${window.innerWidth}`);
+        check(`${name} theme: ${label} text is readable (${candidates.length} elements)`, low.size === 0, [...low.values()].slice(0, 8).join(" | "));
+        if (borderline) note(`${name} theme: ${label}`, `${borderline} of ${candidates.length} text elements sit between 3:1 and 4.5:1 contrast`);
+        check(`${name} theme: ${label} does not scroll sideways`, document.documentElement.scrollWidth <= window.innerWidth + 1, `${document.documentElement.scrollWidth} > ${window.innerWidth}`);
         // Narrower than any phone (for example a small editor preview pane): layout is not judged.
         if (window.innerWidth < 300) continue;
         const cut = scope.flatMap((host) => all("*", host)).filter((element) => element.getClientRects().length && element.getBoundingClientRect().right > window.innerWidth + 1 && !element.closest(".data-table-wrap, .header-nav, .knowledge-nav, [hidden]"));
-        check(`${name} theme: ${page} page has nothing cut off at ${window.innerWidth}px wide`, cut.length === 0, cut.slice(0, 4).map(describe).join(" | "));
+        check(`${name} theme: ${label} has nothing cut off at ${window.innerWidth}px wide`, cut.length === 0, cut.slice(0, 4).map(describe).join(" | "));
       }
+      all(".knowledge-nav button")[0].click();
       app.showPage("model");
       byId("show-model-evidence").click();
       await tick();
@@ -595,9 +614,11 @@
   });
 
   // ---------------------------------------------------------------- report
-  // Optional, for screenshots: ?selftest=1&show=pipeline&theme=dark leaves that page and theme on screen.
+  // Optional, for screenshots: ?selftest=1&show=knowledge&topic=ttft&theme=dark leaves that page, Know more topic and theme on screen.
   const params = new URLSearchParams(location.search);
   app.showPage(pages.includes(params.get("show")) ? params.get("show") : "model");
+  const topicTab = all(".knowledge-nav button").find((tab) => tab.dataset.knowledgePage === params.get("topic"));
+  if (topicTab) topicTab.click();
   if (["light", "dark"].includes(params.get("theme"))) theme.set(params.get("theme"));
   const pass = results.filter((row) => row.status === "pass").length;
   const fail = results.filter((row) => row.status === "fail").length;

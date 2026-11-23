@@ -190,6 +190,9 @@ h1 { max-width: 700px; margin: 0; font-size: 12px; line-height: 1; font-weight: 
 .memory-parity .delta-hot { color: var(--coral); }
 .ttft-strip { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 18px 0 16px; padding: 12px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .ttft-strip b { color: var(--ink); font-weight: 500; }
+.ttft-guide-link { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.ttft-guide-link:hover { color: var(--teal); }
+.memory-parity .ttft-guide-link:hover { color: var(--lime); }
 .target-panel { background: var(--lime); color: var(--on-accent); padding: 26px 24px; border: 1px solid var(--accent-edge); border-left: 0; display: flex; flex-direction: column; justify-content: space-between; }
 .target-panel > label { color: var(--on-accent); }
 .target-value { display: flex; align-items: baseline; gap: 5px; margin: 8px 0 12px; }
@@ -299,6 +302,26 @@ h1 { max-width: 700px; margin: 0; font-size: 12px; line-height: 1; font-weight: 
 .learning-steps li > span { width: 42px; height: 42px; display: grid; place-items: center; color: var(--on-accent); background: var(--lime); font-family: var(--mono); font-weight: 700; }
 .learning-steps h3 { margin: 0 0 5px; }
 .learning-steps p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.learning-steps li > div { min-width: 0; }
+.learning-steps .learning-formula { margin-top: 8px; overflow-wrap: anywhere; }
+.ttft-lede { max-width: 760px; margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.ttft-main-formula { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.ttft-worked { margin-top: 22px; padding: 20px 22px; border: 1px solid var(--line-strong); background: var(--surface); }
+.ttft-worked h3 { margin: 6px 0 14px; font-size: 20px; }
+.ttft-worked > p:last-child { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ttft-worked-rows { display: grid; gap: 1px; border: 1px solid var(--line); background: var(--line); }
+.ttft-worked-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 2.4fr) minmax(110px, auto); gap: 14px; align-items: baseline; padding: 10px 14px; background: var(--surface); font-size: 12px; }
+.ttft-worked-row span { color: var(--muted); }
+.ttft-worked-row code { font-family: var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.ttft-worked-row b { font-family: var(--mono); font-weight: 500; text-align: right; white-space: nowrap; }
+.ttft-worked-total { background: var(--lime-soft); }
+.ttft-worked-total span, .ttft-worked-total code { color: var(--ink); }
+.ttft-worked-total b { font-size: 14px; font-weight: 700; }
+.ttft-inputs dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 14px 0 0; border: 1px solid var(--line); background: var(--line); }
+.ttft-inputs dl > div { padding: 15px; background: var(--surface); }
+.ttft-inputs dt { font-family: var(--mono); color: var(--teal); font-size: 11px; }
+.ttft-inputs dd { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.ttft-inputs + .knowledge-caution { margin-bottom: 16px; }
 .learning-map { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 18px; border: 1px solid var(--line); background: var(--line); }
 .learning-map article { position: relative; min-height: 230px; padding: 22px; background: var(--surface); }
 .learning-step { color: var(--teal); font-family: var(--mono); font-size: 11px; }
@@ -531,6 +554,9 @@ dialog p:not(.section-label) { line-height: 1.55; color: var(--muted); }
   .pipeline-summary .metric, .hardware-summary .metric { padding-left: 0; border-right: 0; }
   .pipeline-card-head { align-items: flex-start; flex-direction: column; }
   .stage-grid { grid-template-columns: 1fr; }
+  .ttft-worked-row { grid-template-columns: 1fr; gap: 3px; }
+  .ttft-worked-row b { text-align: left; }
+  .ttft-inputs dl { grid-template-columns: 1fr; }
   .pipeline-flow-graphic { gap: 4px; }
   .pipeline-flow-graphic > span { min-width: 0; flex: 1 1 0; }
   .data-toolbar label, .evidence-toolbar label { min-width: 0; max-width: 100%; }

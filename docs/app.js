@@ -147,6 +147,8 @@ function firstTokenText(ttft, hardware, kind) {
   return tflopsFor(sheet, name) ? "First token: not available" : "First token: no compute estimate";
 }
 
+const TTFT_GUIDE_LINK = '<button class="ttft-guide-link" type="button" data-open-ttft-guide>How this is calculated</button>';
+
 function compareFirstToken(a, b) {
   if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1;
   return a - b;
@@ -588,7 +590,7 @@ function renderSummary() {
   const timed = fitting.filter((row) => row.ttft !== null).sort((a, b) => a.ttft - b.ttft);
   const kindLabel = state.view === "cpus" ? "CPUs" : "GPUs";
   const derived = timed.filter((row) => computeIsDerived(kindLabel, row.kind === "cpu" ? row.name : row.value)).length;
-  byId("ttft-summary").innerHTML = `<span><b>Time to first token</b> ${state.promptTokens.toLocaleString()}-token prompt, ${state.users} user${state.users > 1 ? "s" : ""}</span>${timed.length ? `<span><b>Fastest</b> ${formatSeconds(timed[0].ttft)} on ${escapeHtml(timed[0].name)}</span><span><b>Median</b> ${formatSeconds(timed[Math.floor(timed.length / 2)].ttft)} across ${timed.length} ${kindLabel} that fit</span>` : `<span>No ${kindLabel} fit, so there is no first-token time</span>`}${derived ? `<span>${derived} use compute derived from ${state.view === "cpus" ? "core count" : "bandwidth"}</span>` : ""}${fitting.length > timed.length ? `<span>${fitting.length - timed.length} that fit have no first-token estimate</span>` : ""}`;
+  byId("ttft-summary").innerHTML = `<span><b>Time to first token</b> ${state.promptTokens.toLocaleString()}-token prompt, ${state.users} user${state.users > 1 ? "s" : ""}</span>${timed.length ? `<span><b>Fastest</b> ${formatSeconds(timed[0].ttft)} on ${escapeHtml(timed[0].name)}</span><span><b>Median</b> ${formatSeconds(timed[Math.floor(timed.length / 2)].ttft)} across ${timed.length} ${kindLabel} that fit</span>` : `<span>No ${kindLabel} fit, so there is no first-token time</span>`}${derived ? `<span>${derived} use compute derived from ${state.view === "cpus" ? "core count" : "bandwidth"}</span>` : ""}${fitting.length > timed.length ? `<span>${fitting.length - timed.length} that fit have no first-token estimate</span>` : ""}${TTFT_GUIDE_LINK}`;
   renderWarnings("model-warnings", modelWarnings());
 }
 
@@ -599,7 +601,45 @@ function renderFirstTokenStrips() {
   const html = best
     ? `<span><b>Time to first token</b> ${formatSeconds(best.ttft)}</span><span>${model} on ${escapeHtml(best.name)}, the fastest accelerator that fits</span><span>${state.promptTokens.toLocaleString()} prompt tokens ÷ ${Math.round(best.prefill).toLocaleString()} tok/s prefill + 1 ÷ ${decimal.format(best.speed)} tok/s decode</span><span>${computeIsDerived("GPUs", best.value) ? "compute derived from bandwidth" : "compute from the workbook estimate"}</span>`
     : `<span><b>Time to first token</b> —</span><span>No accelerator fits ${model} with the current Model → Hardware settings</span>`;
-  for (const host of $$("[data-ttft-strip]")) host.innerHTML = html;
+  for (const host of $$("[data-ttft-strip]")) host.innerHTML = html + TTFT_GUIDE_LINK;
+  renderFirstTokenGuide(best);
+}
+
+// Know more → Time to first token: the same calculation written out for the fastest accelerator that fits.
+function renderFirstTokenGuide(best) {
+  const host = byId("ttft-worked");
+  const model = state.model;
+  const label = '<p class="section-label">Worked example · your current Model → Hardware selection</p>';
+  if (!best) {
+    host.innerHTML = `${label}<p>No accelerator fits ${escapeHtml(model.Model)} with the current Model → Hardware settings, so there is no worked example. Choose a smaller model or quantization there.</p>`;
+    return;
+  }
+  const rate = (value) => value >= 100 ? Math.round(value).toLocaleString() : decimal.format(value);
+  const term = (value) => `${value < 0.1 ? value.toFixed(3) : value.toFixed(2)} s`;
+  const active = Number(model["Active params (B)"]);
+  const gflops = MF.PREFILL_GFLOPS_PER_B * active;
+  const tflops = tflopsFor("GPUs", best.value);
+  const cards = state.gpuQuantity;
+  const users = state.users;
+  const shared = users > 1 ? ` ÷ ${users} users` : "";
+  const gpuPrefill = MF.prefillTokPerSecond({ activeParamsB: active, tflops, quantity: cards, users });
+  const rows = [
+    ["Work per prompt token", `${MF.PREFILL_GFLOPS_PER_B} × ${decimal.format(active)}B active parameters`, `${decimal.format(gflops)} GFLOPs`],
+    ["Compute estimate", `${escapeHtml(best.name)} · ${computeIsDerived("GPUs", best.value) ? "derived from bandwidth" : "workbook estimate"}`, `${decimal.format(tflops)} TFLOPS`],
+    ["Prefill speed", `${MF.PREFILL_MFU} × ${decimal.format(tflops)} × 1000 ÷ ${decimal.format(gflops)}${cards > 1 ? ` × ${decimal.format(MF.quantityScale(cards))} for ${cards} cards` : ""}${shared}`, `${rate(gpuPrefill)} tok/s`],
+  ];
+  if (best.gpuShare !== null && state.hostCpu) {
+    const cpuName = state.hostCpu["CPU / platform"];
+    const cpuTflops = tflopsFor("CPUs", cpuName);
+    const cpuPrefill = MF.prefillTokPerSecond({ activeParamsB: active, tflops: cpuTflops, cpu: true, users });
+    const share = Math.round(best.gpuShare * 100);
+    rows.push(["Host CPU prefill", `${escapeHtml(cpuName)}: ${MF.PREFILL_MFU} × ${decimal.format(cpuTflops)} × 1000 ÷ ${decimal.format(gflops)} × ${MF.CPU_PREFILL_FACTOR}${shared}`, `${rate(cpuPrefill)} tok/s`]);
+    rows.push(["Prefill with CPU offload", `1 ÷ (${share}% ÷ ${rate(gpuPrefill)} + ${100 - share}% ÷ ${rate(cpuPrefill)})`, `${rate(best.prefill)} tok/s`]);
+  }
+  rows.push(["Decode speed", `Bandwidth model · ${escapeHtml(state.runtime)}${users > 1 ? ` · ${users} users` : ""}`, `${decimal.format(best.speed)} tok/s`]);
+  rows.push(["Read the prompt", `${state.promptTokens.toLocaleString()} prompt tokens ÷ ${rate(best.prefill)} tok/s`, term(state.promptTokens / best.prefill)]);
+  rows.push(["Write the first token", `1 ÷ ${decimal.format(best.speed)} tok/s`, term(1 / best.speed)]);
+  host.innerHTML = `${label}<h3>${escapeHtml(model.Model)} on ${escapeHtml(best.name)}</h3><div class="ttft-worked-rows">${rows.map(([name, how, result]) => `<div class="ttft-worked-row"><span>${name}</span><code>${how}</code><b>${result}</b></div>`).join("")}<div class="ttft-worked-row ttft-worked-total"><span>Time to first token</span><code>read the prompt + write the first token</code><b>${formatSeconds(best.ttft)}</b></div></div><p>This is the fastest accelerator that fits. Change the model, prompt length, users, quantity or runtime on Model → Hardware and the example follows.</p>`;
 }
 
 function hardwareRowsForView(view) {
@@ -1549,6 +1589,11 @@ function bindEvents() {
     $$("[data-knowledge-page-content]").forEach((view) => view.hidden = view.dataset.knowledgePageContent !== button.dataset.knowledgePage);
   });
   for (const button of $$("[data-open-page]")) button.addEventListener("click", () => showPage(button.dataset.openPage));
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("[data-open-ttft-guide]")) return;
+    showPage("knowledge");
+    $('.knowledge-nav button[data-knowledge-page="ttft"]').click();
+  });
   for (const button of $$(".status-filter")) button.addEventListener("click", () => {
     state.evidenceStatus = button.dataset.status;
     state.evidenceLimit = EVIDENCE_PAGE;
