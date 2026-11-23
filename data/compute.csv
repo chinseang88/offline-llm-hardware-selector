@@ -134,3 +134,25 @@ CPUs,Threadripper PRO 9975WX,11.2,Workbook planning estimate; no vendor source,D
 CPUs,Xeon w5-2555X (W-2500),14,Workbook planning estimate; no vendor source,DERIVED/ESTIMATE
 CPUs,Xeon w7-2595X (W-2500),26,Workbook planning estimate; no vendor source,DERIVED/ESTIMATE
 CPUs,Xeon w9-3595X (W-3500),60,Workbook planning estimate; no vendor source,DERIVED/ESTIMATE
+GPUs,Intel CRI DCG 28Xe 128GB 220W,256,"Derived from published columns: bandwidth 1200 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI HX 28Xe 128GB 275W (CCG),292.3,"Derived from published columns: bandwidth 1370 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI D270 32Xe 160GB 350W (DCG IBC-D31),320,"Derived from published columns: bandwidth 1500 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI XT 32Xe 160GB 300W (CCG),365.3,"Derived from published columns: bandwidth 1712 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI ODM 32Xe 480GB 350W,320,"Derived from published columns: bandwidth 1500 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI DCG 24Xe 96GB 150W,192,"Derived from published columns: bandwidth 900 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+GPUs,Intel CRI LX 24Xe 96GB 250W (CCG),219.1,"Derived from published columns: bandwidth 1027 GB/s x 0.2134 TFLOPS per GB/s, the median of Intel accelerators with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 16C 4P+8E+4LPE 35W,4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 16C 4P+8E+4LPE 65W,4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 28C 8P+16E+4LPE 125W,8.4,"Derived from published columns: 28 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 28C 8P+16E+4LPE 65W,8.4,"Derived from published columns: 28 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 52C 16P+32E+4LPE 150W,15.6,"Derived from published columns: 52 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 6C 2P+0E+4LPE 65W,1.8,"Derived from published columns: 6 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 8C 4P+0E+4LPE 35W,2.4,"Derived from published columns: 8 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-S 8C 4P+0E+4LPE 65W,2.4,"Derived from published columns: 8 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-E Xeon E up to 16P (iGFX) 125W,4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-E Xeon E up to 16P (iGFX) 65W,4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-BGA 16C 4P+8E+4LPE 12Xe (NVL-H),4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-BGA 16C 4P+8E+4LPE 4Xe (NVL-H),4.8,"Derived from published columns: 16 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-BGA 28C 8P+16E+4LPE (NVL-HX),8.4,"Derived from published columns: 28 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-BGA 6C 2P+4LPE 2Xe (NVL-U),1.8,"Derived from published columns: 6 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE
+CPUs,NVL-BGA 8C 4P+4LPE 4Xe (NVL-H),2.4,"Derived from published columns: 8 cores x 0.3 TFLOPS per core, the median of x86 CPU rows with a workbook estimate",DERIVED/ESTIMATE

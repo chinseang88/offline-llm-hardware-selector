@@ -19,12 +19,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wdth,wght@87.5,400;87.5,500;87.5,600;100,700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261123-stage5">
+  <link rel="stylesheet" href="styles.css?v=20261123-ttft">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="formulas.js?v=20261123-stage5" defer></script>
-  <script src="theme.js?v=20261123-stage5" defer></script>
-  <script src="pipeline.js?v=20261123-stage5" defer></script>
-  <script src="app.js?v=20261123-stage5" defer></script>
+  <script src="formulas.js?v=20261123-ttft" defer></script>
+  <script src="theme.js?v=20261123-ttft" defer></script>
+  <script src="pipeline.js?v=20261123-ttft" defer></script>
+  <script src="app.js?v=20261123-ttft" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -248,6 +248,7 @@
 
     <section class="workspace page-view data-page" id="database-page" aria-labelledby="database-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Public source tables</p><h1 id="database-title">The database, without hiding the fields.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Read-only CSV mirror</span></div></div>
+      <div class="ttft-strip" data-ttft-strip aria-live="polite"></div>
       <div class="data-toolbar"><label>Table <select id="database-select"><option value="models">Models</option><option value="gpus">GPUs</option><option value="cpus">CPUs</option><option value="voiceModels">Voice Models (VAD / Diar / ASR)</option><option value="quants">Quantization</option><option value="libraries">Runtimes / Libraries</option><option value="archSupport">Model Arch Support</option><option value="taskRules">Task Rules</option><option value="compute">Compute estimates (first token)</option><option value="referenceModels">Reference Models</option></select></label><label class="database-search"><i data-lucide="search"></i><input id="database-search" type="search" placeholder="Search this table"></label><button class="secondary-button" id="download-table"><i data-lucide="download"></i> Download CSV</button></div>
       <div class="sort-panel"><label><i data-lucide="arrow-up-down"></i><span>Sort table by</span><select id="database-sort-column"></select></label><button class="sort-direction" id="database-sort-direction" data-direction="asc" title="Toggle Database sort direction"><i data-lucide="arrow-up-down"></i><span>Ascending</span></button><output class="sort-output" id="database-sort-output" aria-live="polite"></output></div>
       <div class="data-table-wrap">
@@ -258,6 +259,7 @@
 
     <section class="workspace page-view data-page" id="evidence-page" aria-labelledby="evidence-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Fact-check ledger</p><h1 id="evidence-title">Every parameter, its source, and its status.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span id="evidence-count">Loading checks…</span></div></div>
+      <div class="ttft-strip" data-ttft-strip aria-live="polite"></div>
       <div class="evidence-toolbar"><button class="status-filter active" data-status="all">All</button><button class="status-filter" data-status="VERIFIED">Verified</button><button class="status-filter" data-status="MISMATCH">Corrected</button><button class="status-filter" data-status="DERIVED/ESTIMATE">Derived</button><button class="status-filter" data-status="OTHER">Review / missing</button><label>Table <select id="evidence-sheet-filter"><option value="all">All tables</option></select></label><div class="sort-panel compact"><label><i data-lucide="arrow-up-down"></i><span>Sort by</span><select id="evidence-sort-column"><option value="Checked">Checked date</option><option value="Status">Status</option><option value="Item">Item</option><option value="Sheet">Table</option><option value="Parameter">Parameter</option><option value="Source type">Source type</option></select></label><button class="sort-direction" id="evidence-sort-direction" data-direction="desc" title="Toggle sort direction"><i data-lucide="arrow-down-wide-narrow"></i><span>Descending</span></button></div><label class="database-search"><i data-lucide="search"></i><input id="evidence-search" type="search" placeholder="Search item, parameter, note, or URL"></label><button class="secondary-button" id="download-evidence"><i data-lucide="download"></i> Download evidence</button></div>
       <output class="sort-output" id="evidence-sort-output" aria-live="polite"></output>
       <div id="evidence-results" class="evidence-results"></div>
@@ -266,6 +268,7 @@
 
     <section class="workspace page-view knowledge-page" id="knowledge-page" aria-labelledby="knowledge-title" hidden>
       <div class="workspace-heading"><div><p class="kicker">Knowledge reading</p><h1 id="knowledge-title">Know more, before choosing a model.</h1></div><div class="dataset-stamp"><span class="stamp-pulse"></span><span>Source-linked model education</span></div></div>
+      <div class="ttft-strip" data-ttft-strip aria-live="polite"></div>
       <div class="knowledge-nav" role="tablist" aria-label="Knowledge topics"><button class="active" data-knowledge-page="model360" role="tab" aria-selected="true"><i data-lucide="box"></i> Model 360</button><button data-knowledge-page="latest" role="tab" aria-selected="false"><i data-lucide="sparkles"></i> Latest models</button><button data-knowledge-page="evidence" role="tab" aria-selected="false"><i data-lucide="badge-check"></i> Evidence</button><button data-knowledge-page="learning" role="tab" aria-selected="false"><i data-lucide="book-open"></i> Learning</button></div>
       <div class="knowledge-view-page active" data-knowledge-page-content="model360"><div class="knowledge-hero"><span class="vendor-chip">360</span><div><p class="section-label">One model, fully explained</p><h2>Identity, architecture, memory, speed and source trail.</h2><p>Open a model from the selector to inspect its exact parameters, active compute size, KV geometry, context, publisher card, exact artifact links and evidence checks.</p></div></div><div class="knowledge-flow"><article><span>01</span><h3>Identity + lineage</h3><p>Publisher, family, release date, licence, model card and exact GGUF/source revision.</p></article><article><span>02</span><h3>Total vs active</h3><p>Total parameters determine checkpoint storage. Active parameters drive per-token compute.</p></article><article><span>03</span><h3>Memory fit</h3><p>Weights + KV cache + runtime overhead. Context and users can matter as much as the model name.</p></article><article><span>04</span><h3>Measured vs estimated</h3><p>Measured speed names its hardware, runtime, quantization, workload and source. Estimated speed is labelled as an estimate.</p></article></div></div>
       <div class="knowledge-view-page" data-knowledge-page-content="latest" hidden><div class="knowledge-section-head"><div><p class="section-label">Verified additions</p><h2>Latest official and open-weight releases.</h2></div><span id="knowledge-latest-count" class="status-pill">Loading</span></div><div id="knowledge-latest-models" class="knowledge-models"></div><p class="knowledge-caution"><i data-lucide="shield-check"></i> Qwen 4 is not yet a released official model. Flash-Next is the published Qwen 4-architecture preview. Gemini 4 Hydrogen/Carbon community uploads are excluded because they are not valid Google model weights.</p></div>
@@ -291,7 +294,7 @@
         <article><span>02</span><h3>KV cache + overhead</h3><code>2 × layers × KV heads × head dim × KV bits / 8 × context × users</code><p>KV cache at 4, 8 or 16 bits, plus 7% of the weights for execution overhead.</p></article>
         <article><span>03</span><h3>Decode</h3><code>runtime efficiency × bandwidth / (active params × bits / 8) / users</code><p>Efficiency comes from the runtime table for the hardware class. Each extra identical card adds 80% of its bandwidth.</p></article>
         <article><span>04</span><h3>CPU offload</h3><code>1 / (bytes per token × (GPU share / GPU rate + CPU share / CPU rate))</code><p>When a model spills past GPU memory, the overflow runs from host RAM (installed RAM minus 8 GB) at CPU speed. Only llama.cpp, Ollama, LM Studio and IPEX-LLM split a model this way.</p></article>
-        <article><span>05</span><h3>Time to first token</h3><code>prompt tokens / (0.35 × TFLOPS × 1000 / (2 × active params) / users) + 1 / decode tok/s</code><p>Prefill is compute-bound, so it uses a compute estimate per GPU or CPU (CPUs at 60% of it). The estimates are planning figures without a vendor source. Pre-release rows have no published figure and show no first-token time.</p></article>
+        <article><span>05</span><h3>Time to first token</h3><code>prompt tokens / (0.35 × TFLOPS × 1000 / (2 × active params) / users) + 1 / decode tok/s</code><p>Prefill is compute-bound, so it uses a compute estimate per GPU or CPU (CPUs at 60% of it). The estimates are planning figures without a vendor source. A row without a workbook estimate, such as pre-release hardware, uses a figure derived from its published columns: bandwidth × the median TFLOPS per GB/s of the same vendor’s accelerators, or cores × the median TFLOPS per core of the same CPU class. Such rows are marked “derived compute”.</p></article>
         <article><span>06</span><h3>Concurrent sets</h3><code>min(usable memory / memory per set, effective bandwidth / bandwidth per set)</code><p>On the Multi-LLM tab one set is Stage 1 to 4 (VAD, diarization, speech recognition and one LLM) with its own copy of every model, and Stage 5 reports the count. With every set busy, the LLMs share the prefill compute.</p></article>
       </div>
     </section>

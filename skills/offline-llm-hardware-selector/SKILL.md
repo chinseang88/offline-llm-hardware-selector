@@ -17,7 +17,7 @@ Repo layout (paths relative to the repo root; find it with `**/offline-llm-hardw
 | `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` and Excel-parity audit in `docs/parity.json` after CSV edits |
 | `scripts/selector_parity.py` | Quantify web/CLI vs Excel memory and throughput formulas for 8K/32K workloads |
 | `scripts/export_public_data.py`, `scripts/excel/*` | Workbook ↔ CSV round trip (only when the Excel workbook is available) |
-| `scripts/export_compute_estimates.py` | Refresh `data/compute.csv` (compute estimates for time to first token) from the workbook's Power sheet; pre-release rows go only to the ignored `docs/private_compute.json` |
+| `scripts/export_compute_estimates.py` | Refresh `data/compute.csv` (compute estimates for time to first token) from the workbook's Power sheet; the workbook figure of a pre-release row goes only to the ignored `docs/private_compute.json`. `--derive` redoes the figures derived from published columns for rows without a workbook estimate |
 | `data/*.csv` | models, gpus, cpus, voice_models, quant, libraries (runtime efficiency), arch_support, task_rules, compute (TFLOPS estimates) + evidence log |
 | `references/conventions.md` | Sizing formulas, status legend, hybrid/MLA KV conventions |
 | `references/sources.md` | Where each parameter comes from, URL patterns, known pitfalls |
@@ -77,5 +77,5 @@ Failures must be fixed. "To review" items are judgement calls (for example recen
 - Never invent a spec. If the vendor page is JS-only or retired (many GeForce 10/16/20 pages, Qualcomm), say "vendor page unavailable" and mark the row amber.
 - Nova Lake (NVL) and Crescent Island (CRI) may be shown only as explicitly labelled `Pre-release planning / public source pending` rows, with internal IDs, pricing, availability notes and private source references removed. PTL/RZL and other private SKUs remain excluded.
 - Prices are not tracked here (the workbook's indicative prices were unsourced placeholders).
-- Compute (TFLOPS) figures are planning estimates used only for time to first token; always call them estimates. Never add a compute figure for a `Pre-release planning` row to `data/compute.csv`, the site, tests or documentation: those stay in the ignored `docs/private_compute.json`.
+- Compute (TFLOPS) figures are planning estimates used only for time to first token; always call them estimates. Never add the workbook's compute figure for a `Pre-release planning` row to `data/compute.csv`, the site, tests or documentation: it stays in the ignored `docs/private_compute.json`. Such a row may carry only the figure derived from its published columns (`export_compute_estimates.py --derive`), labelled “derived compute”.
 - Quote values with units exactly as the source states them (GB/s vs GiB, TGP vs TBP, cTDP ranges).

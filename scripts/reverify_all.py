@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 
 import formulas as F
-from common import DATA, OUT, ROOT, UA, load_rows
+from common import DATA, DERIVED_BASIS, OUT, ROOT, UA, derive_compute, load_rows
 
 DOCS = ROOT / "docs"
 SCRIPTS = ROOT / "scripts"
@@ -137,9 +137,15 @@ def check_data(report, tables):
     report.check(group, "compute estimates are positive numbers for GPUs or CPUs", not bad_compute, sample(bad_compute))
     unlabelled = [row["Item"] for row in compute if row["Evidence status"] != "DERIVED/ESTIMATE"]
     report.check(group, "compute estimates are all labelled as estimates", not unlabelled, sample(unlabelled))
-    planning = {row[key] for name, key in (("gpus", "Accelerator"), ("cpus", "CPU / platform")) for row in tables[name] if PLANNING.search(row.get("Evidence status", ""))}
-    leaked = sorted({row["Item"] for row in compute} & planning)
-    report.check(group, "no compute estimate is published for pre-release planning hardware", not leaked, sample(leaked))
+    workbook = {(row["Sheet"], row["Item"]): F.positive(row["TFLOPS (est.)"]) for row in compute if not row["Basis"].startswith(DERIVED_BASIS)}
+    planning = {(sheet, row[key]) for sheet, name, key in (("GPUs", "gpus", "Accelerator"), ("CPUs", "cpus", "CPU / platform"))
+                for row in tables[name] if PLANNING.search(row.get("Evidence status", ""))}
+    leaked = sorted(item for sheet, item in set(workbook) & planning)
+    report.check(group, "no workbook compute estimate is published for pre-release planning hardware", not leaked, sample(leaked))
+    expected = {(row["Sheet"], row["Item"]): (row["TFLOPS (est.)"], row["Basis"]) for row in derive_compute({"GPUs": gpus, "CPUs": cpus}, workbook)}
+    derived = {(row["Sheet"], row["Item"]): (row["TFLOPS (est.)"], row["Basis"]) for row in compute if row["Basis"].startswith(DERIVED_BASIS)}
+    stale = sorted(item for sheet, item in set(expected) | set(derived) if expected.get((sheet, item)) != derived.get((sheet, item)))
+    report.check(group, "derived compute figures equal the published-column formula (run export_compute_estimates.py --derive)", not stale, sample(stale))
 
     for name, key in (("models", "Model"), ("gpus", "Accelerator"), ("cpus", "CPU / platform")):
         rows = tables[name]
@@ -182,9 +188,8 @@ def check_references(report, tables):
         known = {row[key] for row in tables[name]}
         orphans = sorted(row["Item"] for row in tables["compute"] if row["Sheet"] == sheet and row["Item"] not in known)
         report.check(group, f"compute estimates for {sheet} point at existing rows", not orphans, sample(orphans))
-        released = {row[key] for row in tables[name] if not PLANNING.search(row.get("Evidence status", ""))}
-        uncovered = sorted(released - {row["Item"] for row in tables["compute"] if row["Sheet"] == sheet})
-        report.check(group, f"every released {sheet} row has a compute estimate for time to first token", not uncovered, sample(uncovered))
+        uncovered = sorted(known - {row["Item"] for row in tables["compute"] if row["Sheet"] == sheet})
+        report.check(group, f"every {sheet} row has a compute estimate for time to first token", not uncovered, sample(uncovered))
     unknown_sheets = {row["Sheet"] for row in evidence} - set(SHEET_TABLES) - {"NVMe Storage"}
     report.check(group, "evidence sheets are all known tables", not unknown_sheets, sorted(unknown_sheets))
 

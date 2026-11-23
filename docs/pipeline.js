@@ -197,10 +197,10 @@
 
     const alone = result.llms[0].ttftAlone;
     const tflops = gpu ? ctx.tflops("GPUs", gpu.Accelerator) : 0;
-    const prompt = `${state.promptTokens.toLocaleString()}-token prompt`;
+    const prompt = `${state.promptTokens.toLocaleString()}-token prompt${gpu && ctx.computeDerived("GPUs", gpu.Accelerator) ? " · compute derived from bandwidth" : ""}`;
     let ttft = "—";
     let ttftNote;
-    if (!tflops) ttftNote = planning ? "Time to first token: no public compute figure for this pre-release row" : "Time to first token: no compute estimate for this accelerator";
+    if (!tflops) ttftNote = "Time to first token: no compute estimate for this accelerator";
     else if (result.ttftWorstLoaded !== null) { ttft = ctx.seconds(result.ttftWorstLoaded); ttftNote = `Time to first token with every set busy · ${prompt}`; }
     else if (alone !== null) { ttft = ctx.seconds(alone); ttftNote = `Time to first token, one set running alone · ${prompt}`; }
     else ttftNote = "Time to first token: select an LLM in Stage 4";

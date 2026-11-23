@@ -115,10 +115,16 @@ const EVIDENCE_PAGE = 300;
 let efficiencyTable = {};
 let taskRules = MF.buildTaskRules([]);
 let computeByItem = new Map();
+let derivedCompute = new Set();
 
-// Compute estimate (TFLOPS) behind the first-token time; 0 when none is published for the row.
+// Compute estimate (TFLOPS) behind the first-token time; 0 when the row has none.
 function tflopsFor(sheet, name) {
   return computeByItem.get(`${sheet}|${name}`) || 0;
+}
+
+// True when the figure comes from the published-column formula instead of a workbook estimate.
+function computeIsDerived(sheet, name) {
+  return derivedCompute.has(`${sheet}|${name}`);
 }
 
 function isPlanningRow(row) {
@@ -135,10 +141,10 @@ function prefillRate(model, { gpu = null, cpu = null, quantity = 1, users = 1, g
 }
 
 function firstTokenText(ttft, hardware, kind) {
-  if (ttft !== null) return `First token ${formatSeconds(ttft)}`;
-  const known = tflopsFor(kind === "cpu" ? "CPUs" : "GPUs", kind === "cpu" ? hardware["CPU / platform"] : hardware.Accelerator);
-  if (known) return "First token: not available";
-  return isPlanningRow(hardware) ? "First token: no public compute figure" : "First token: no compute estimate";
+  const sheet = kind === "cpu" ? "CPUs" : "GPUs";
+  const name = kind === "cpu" ? hardware["CPU / platform"] : hardware.Accelerator;
+  if (ttft !== null) return `First token ${formatSeconds(ttft)}${computeIsDerived(sheet, name) ? " · derived compute" : ""}`;
+  return tflopsFor(sheet, name) ? "First token: not available" : "First token: no compute estimate";
 }
 
 function compareFirstToken(a, b) {
@@ -427,6 +433,7 @@ function hardwareRows() {
         const memory = cpuUsable(row);
         const blocker = blockerFor(efficiency(row, true) > 0, memory >= need);
         const speed = tokPerSecond(row, state.model, true);
+        const prefill = prefillRate(state.model, { cpu: row, users: state.users });
         return {
           raw: row,
           name: row["CPU / platform"],
@@ -437,7 +444,8 @@ function hardwareRows() {
           bandwidth: Number(row["Memory BW (GB/s)"]),
           power: row["Max turbo / max power (W)"],
           speed,
-          ttft: MF.timeToFirstToken({ promptTokens: state.promptTokens, prefillTokPerSecond: prefillRate(state.model, { cpu: row, users: state.users }), decodeTokPerSecond: speed }),
+          prefill,
+          ttft: MF.timeToFirstToken({ promptTokens: state.promptTokens, prefillTokPerSecond: prefill, decodeTokPerSecond: speed }),
           fits: !blocker,
           blocker,
           gpuShare: null,
@@ -476,6 +484,7 @@ function hardwareRows() {
         bandwidth: Number(row["Bandwidth (GB/s)"]),
         power: row["TDP / board power (W)"],
         speed,
+        prefill,
         ttft: MF.timeToFirstToken({ promptTokens: state.promptTokens, prefillTokPerSecond: prefill, decodeTokPerSecond: speed }),
         fits: !blocker,
         blocker,
@@ -578,8 +587,19 @@ function renderSummary() {
   const fitting = hardwareRows().filter((row) => row.fits);
   const timed = fitting.filter((row) => row.ttft !== null).sort((a, b) => a.ttft - b.ttft);
   const kindLabel = state.view === "cpus" ? "CPUs" : "GPUs";
-  byId("ttft-summary").innerHTML = `<span><b>Time to first token</b> ${state.promptTokens.toLocaleString()}-token prompt, ${state.users} user${state.users > 1 ? "s" : ""}</span>${timed.length ? `<span><b>Fastest</b> ${formatSeconds(timed[0].ttft)} on ${escapeHtml(timed[0].name)}</span><span><b>Median</b> ${formatSeconds(timed[Math.floor(timed.length / 2)].ttft)} across ${timed.length} ${kindLabel} that fit</span>` : `<span>No ${kindLabel} that fit have a compute figure</span>`}${fitting.length > timed.length ? `<span>${fitting.length - timed.length} that fit have no public compute figure</span>` : ""}`;
+  const derived = timed.filter((row) => computeIsDerived(kindLabel, row.kind === "cpu" ? row.name : row.value)).length;
+  byId("ttft-summary").innerHTML = `<span><b>Time to first token</b> ${state.promptTokens.toLocaleString()}-token prompt, ${state.users} user${state.users > 1 ? "s" : ""}</span>${timed.length ? `<span><b>Fastest</b> ${formatSeconds(timed[0].ttft)} on ${escapeHtml(timed[0].name)}</span><span><b>Median</b> ${formatSeconds(timed[Math.floor(timed.length / 2)].ttft)} across ${timed.length} ${kindLabel} that fit</span>` : `<span>No ${kindLabel} fit, so there is no first-token time</span>`}${derived ? `<span>${derived} use compute derived from ${state.view === "cpus" ? "core count" : "bandwidth"}</span>` : ""}${fitting.length > timed.length ? `<span>${fitting.length - timed.length} that fit have no first-token estimate</span>` : ""}`;
   renderWarnings("model-warnings", modelWarnings());
+}
+
+// Database, Evidence and Know more repeat the first-token result of the current Model → Hardware selection.
+function renderFirstTokenStrips() {
+  const best = hardwareRowsForView("gpus").filter((row) => row.fits && row.ttft !== null).sort((a, b) => a.ttft - b.ttft)[0];
+  const model = escapeHtml(state.model.Model);
+  const html = best
+    ? `<span><b>Time to first token</b> ${formatSeconds(best.ttft)}</span><span>${model} on ${escapeHtml(best.name)}, the fastest accelerator that fits</span><span>${state.promptTokens.toLocaleString()} prompt tokens ÷ ${Math.round(best.prefill).toLocaleString()} tok/s prefill + 1 ÷ ${decimal.format(best.speed)} tok/s decode</span><span>${computeIsDerived("GPUs", best.value) ? "compute derived from bandwidth" : "compute from the workbook estimate"}</span>`
+    : `<span><b>Time to first token</b> —</span><span>No accelerator fits ${model} with the current Model → Hardware settings</span>`;
+  for (const host of $$("[data-ttft-strip]")) host.innerHTML = html;
 }
 
 function hardwareRowsForView(view) {
@@ -677,6 +697,7 @@ function render() {
   updatePowerReadouts();
   renderSummary();
   renderRows();
+  renderFirstTokenStrips();
 }
 
 function modelSearchText(row) {
@@ -981,8 +1002,10 @@ function renderHardwareView() {
   renderWarnings("hardware-warnings", hardwareWarnings(item));
   const summary = byId("hardware-summary");
   const planning = isPlanningRow(item.raw);
-  const tflops = tflopsFor(item.kind === "cpu" ? "CPUs" : "GPUs", item.kind === "cpu" ? item.raw["CPU / platform"] : item.raw.Accelerator);
-  const computeNote = tflops ? "Compute estimate, used for first-token time" : planning ? "No public compute figure for this pre-release row" : "No compute estimate";
+  const sheet = item.kind === "cpu" ? "CPUs" : "GPUs";
+  const itemName = item.kind === "cpu" ? item.raw["CPU / platform"] : item.raw.Accelerator;
+  const tflops = tflopsFor(sheet, itemName);
+  const computeNote = !tflops ? "No compute estimate" : computeIsDerived(sheet, itemName) ? `Compute derived from ${item.kind === "cpu" ? "core count" : "bandwidth"}, used for first-token time` : "Compute estimate, used for first-token time";
   summary.innerHTML = `<div><p class="section-label">Selected ${item.kind === "gpu" ? "accelerator" : "CPU platform"}${planning ? " · PRE-RELEASE PLANNING" : ""}</p><h2>${escapeHtml(item.name)}</h2><button class="text-button" id="show-hardware-evidence"><i data-lucide="badge-check"></i><span>Fact check</span></button></div><div class="metric"><span>${decimal.format(capacity)} GB</span><small>Usable memory</small></div><div class="metric"><span>${decimal.format(hardwareBandwidth(item))} GB/s</span><small>Bandwidth</small></div><div class="metric"><span>${fits}</span><small>Models that fit</small></div><div class="metric"><span>${tflops ? `${decimal.format(tflops)} TFLOPS` : "—"}</span><small>${computeNote}</small></div>`;
   summary.querySelector("#show-hardware-evidence").addEventListener("click", () => openEvidence(item.raw, item.kind));
   const host = byId("hardware-model-results");
@@ -1543,10 +1566,16 @@ async function boot() {
     if (!Object.keys(efficiencyTable).length) throw new Error("data.json has no runtime table. Rebuild it with scripts/build_web_data.py.");
     taskRules = MF.buildTaskRules(state.data.taskRules);
     computeByItem = new Map((state.data.compute || []).map((row) => [`${row.Sheet}|${row.Item}`, Number(row["TFLOPS (est.)"])]));
+    derivedCompute = new Set((state.data.compute || []).filter((row) => /^Derived/.test(row.Basis || "")).map((row) => `${row.Sheet}|${row.Item}`));
     try {
-      // Optional local file with compute estimates for pre-release rows; it is git-ignored and never published.
+      // Optional local file with the workbook estimates for pre-release rows; it is git-ignored and never published.
       const computeResponse = await fetch("private_compute.json", { cache: "no-store" });
-      if (computeResponse.ok) for (const row of (await computeResponse.json()).compute || []) computeByItem.set(`${row.Sheet}|${row.Item}`, Number(row["TFLOPS (est.)"]));
+      if (computeResponse.ok) {
+        for (const row of (await computeResponse.json()).compute || []) {
+          computeByItem.set(`${row.Sheet}|${row.Item}`, Number(row["TFLOPS (est.)"]));
+          derivedCompute.delete(`${row.Sheet}|${row.Item}`);
+        }
+      }
     } catch { /* the public site has no such file */ }
     try {
       const privateResponse = await fetch("private_reference.json", { cache: "no-store" });
@@ -1589,14 +1618,14 @@ async function boot() {
     bindEvents();
     window.ModelFitPipeline.init({
       data: state.data, efficiencyTable: () => efficiencyTable, runtimes: runtimeNames, intelOnly: () => state.intelOnly,
-      gpuLabel: gpuCatalogLabel, gpuName: gpuDisplayName, escapeHtml, iconize, tflops: tflopsFor, seconds: formatSeconds, isPlanning: isPlanningRow,
+      gpuLabel: gpuCatalogLabel, gpuName: gpuDisplayName, escapeHtml, iconize, tflops: tflopsFor, computeDerived: computeIsDerived, seconds: formatSeconds, isPlanning: isPlanningRow,
     });
     render();
     renderEvidence();
     renderParityAudit();
     renderVerification();
     iconize();
-    window.ModelFitApp = { state, showPage, render, renderHardwareView, hardwareRows, hardwareRowsForView, compatibleModels, currentHardwareItem, memoryNeed, copySummary, latestModels, tflopsFor };
+    window.ModelFitApp = { state, showPage, render, renderHardwareView, hardwareRows, hardwareRowsForView, compatibleModels, currentHardwareItem, memoryNeed, copySummary, latestModels, tflopsFor, computeDerived: computeIsDerived };
     document.dispatchEvent(new CustomEvent("modelfit:ready"));
     if (new URLSearchParams(location.search).has("selftest")) {
       const script = document.createElement("script");

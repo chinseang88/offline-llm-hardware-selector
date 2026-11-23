@@ -188,6 +188,8 @@ h1 { max-width: 700px; margin: 0; font-size: 12px; line-height: 1; font-weight: 
 .memory-parity { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--panel-line); display: flex; gap: 22px; flex-wrap: wrap; color: var(--panel-muted); font-family: var(--mono); font-size: 10px; }
 .memory-parity b { color: var(--panel-ink); font-weight: 500; }
 .memory-parity .delta-hot { color: var(--coral); }
+.ttft-strip { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 18px 0 16px; padding: 12px 16px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.ttft-strip b { color: var(--ink); font-weight: 500; }
 .target-panel { background: var(--lime); color: var(--on-accent); padding: 26px 24px; border: 1px solid var(--accent-edge); border-left: 0; display: flex; flex-direction: column; justify-content: space-between; }
 .target-panel > label { color: var(--on-accent); }
 .target-value { display: flex; align-items: baseline; gap: 5px; margin: 8px 0 12px; }

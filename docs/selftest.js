@@ -32,6 +32,13 @@
   const fitsOf = (rows) => rows.filter((row) => row.fits).length;
   const shown = (id) => all(".result-row", byId(id)).length;
   const need = () => app.memoryNeed(state.model);
+  // Database, Evidence and Know more must show the fastest first-token time of the current Model → Hardware selection.
+  const firstTokenStrip = (pageId) => {
+    const text = byId(pageId).querySelector("[data-ttft-strip]").textContent;
+    const best = gpuRows().filter((row) => row.fits && row.ttft !== null).sort((a, b) => a.ttft - b.ttft)[0];
+    const shownSeconds = text.match(/Time to first token\s*([\d.,]+) s/);
+    return Boolean(best && shownSeconds) && text.includes(best.name) && /tok\/s prefill \+ 1 ÷/.test(text) && near(number(shownSeconds[1]), best.ttft, Math.max(0.006, best.ttft * 0.006));
+  };
 
   async function section(name, body) {
     try {
@@ -55,6 +62,9 @@
     check("Start-up: formula audit rendered", byId("parity-audit-content").textContent.includes("%"));
     check("Start-up: the pipeline tab is named Multi-LLM", document.querySelector('.nav-page[data-page="pipeline"]').textContent.trim() === "Multi-LLM");
     check("Start-up: compute estimates loaded for first-token time", data.compute.length > 0 && app.tflopsFor("GPUs", "Intel Arc Pro B60") > 0);
+    const noCompute = [...data.gpus.filter((row) => !app.tflopsFor("GPUs", row.Accelerator)).map((row) => row.Accelerator), ...data.cpus.filter((row) => !app.tflopsFor("CPUs", row["CPU / platform"])).map((row) => row["CPU / platform"])];
+    check("Start-up: every GPU and CPU has a compute figure for first-token time", noCompute.length === 0, noCompute.slice(0, 5).join(", "));
+    check("Start-up: workbook estimates are never marked as derived", !app.computeDerived("GPUs", "Intel Arc Pro B60") && !app.computeDerived("GPUs", "RTX 5090"));
     check("Start-up: method section explains time to first token and concurrent sets", /Time to first token/.test(byId("method").textContent) && /Concurrent sets/.test(byId("method").textContent));
   });
 
@@ -182,7 +192,16 @@
     check("Model page: first-token time = prompt / prefill + 1 / decode", base5090.ttft !== null && near(base5090.ttft, expected, 1e-9), `${base5090.ttft} vs ${expected}`);
     check("Model page: each hardware row shows a first-token line", all("#results .result-row").every((row) => /First token/.test(row.querySelector(".speed-cell").textContent)));
     check("Model page: summary reports the fastest and median first token", /Fastest/.test(byId("ttft-summary").textContent) && /Median/.test(byId("ttft-summary").textContent));
-    check("Model page: rows without a compute figure show no first-token time", gpuRows().every((row) => app.tflopsFor("GPUs", row.value) > 0 || row.ttft === null));
+    check("Model page: every GPU that fits has a first-token time", gpuRows().filter((row) => row.fits).every((row) => row.ttft !== null) && all("#results .result-row").every((row) => /First token \d/.test(row.querySelector(".speed-cell").textContent)));
+    const derivedRow = gpuRows().find((row) => row.fits && app.computeDerived("GPUs", row.value));
+    if (derivedRow) {
+      const derivedPrefill = MF.prefillTokPerSecond({ activeParamsB: state.model["Active params (B)"], tflops: app.tflopsFor("GPUs", derivedRow.value) });
+      check("Model page: a row with derived compute uses the same first-token formula", near(derivedRow.ttft, state.promptTokens / derivedPrefill + 1 / derivedRow.speed, 1e-9));
+      check("Model page: a row with derived compute is labelled", all("#results .result-row").some((row) => row.querySelector(".hardware-name strong").textContent === derivedRow.name && /derived compute/.test(row.querySelector(".speed-cell").textContent)) && /derived from bandwidth/.test(byId("ttft-summary").textContent));
+    }
+    all(".view-switcher button").find((button) => button.dataset.view === "cpus").click();
+    check("Model page: every CPU that fits has a first-token time", app.hardwareRowsForView("cpus").filter((row) => row.fits).every((row) => row.ttft !== null) && all("#results .result-row").every((row) => /First token \d/.test(row.querySelector(".speed-cell").textContent)));
+    all(".view-switcher button").find((button) => button.dataset.view === "gpus").click();
     set("prompt-length-input", 8192);
     check("Model page: a longer prompt raises first-token time", timedRow().ttft > base5090.ttft * 3);
     set("prompt-length-input", 2048);
@@ -353,8 +372,10 @@
     byId("pipe-reset").click();
     check("Multi-LLM page: Reset restores the defaults", pipeline.state.gpu === gpu.Accelerator && pipeline.compute().llmsUsed === 1 && pipeline.compute().sets === baseSets);
 
-    if (app.tflopsFor("GPUs", gpu.Accelerator)) check("Multi-LLM page: default accelerator reports time to first token", pipeline.compute().ttftWorstLoaded !== null && /first token with every set busy/.test(answer()));
-    else check("Multi-LLM page: a pre-release accelerator says its compute figure is not public", pipeline.compute().ttftWorstLoaded === null && /no public compute figure/.test(answer()));
+    check("Multi-LLM page: the default accelerator reports time to first token", pipeline.compute().ttftWorstLoaded !== null && /first token with every set busy/.test(answer()) && /\d s/.test(all("#pipeline-summary .metric span")[2].textContent));
+    check("Multi-LLM page: derived compute is named in Stage 5", app.computeDerived("GPUs", gpu.Accelerator) === /compute derived from bandwidth/.test(answer()));
+    const untimed = all("option", byId("pipe-gpu-select")).map((option) => option.value).filter((name) => { set("pipe-gpu-select", name); const row = pipeline.compute().llms[0]; return row.tokAlone > 0 && row.ttftAlone === null; });
+    check("Multi-LLM page: every accelerator that runs the Stage 4 LLM has a first-token time", untimed.length === 0, untimed.slice(0, 5).join(", "));
     set("pipe-gpu-select", "H200 NVL 141GB");
     result = pipeline.compute();
     const tflops = app.tflopsFor("GPUs", "H200 NVL 141GB");
@@ -392,7 +413,10 @@
     set("database-select", "gpus");
     check("Database page: Intel-only filters the GPU table", all("#database-table tbody tr").length === data.gpus.filter((row) => row.Vendor === "Intel").length);
     byId("intel-only-toggle").click();
+    set("database-select", "compute");
+    check("Database page: the compute table covers every GPU and CPU", data.compute.length === data.gpus.length + data.cpus.length && all("#database-table tbody tr").length === data.compute.length);
     set("database-select", "models");
+    check("Database page: shows the time to first token of the current selection", firstTokenStrip("database-page"));
   });
 
   // -------------------------------------------------------------- evidence
@@ -423,11 +447,17 @@
     check("Evidence page: sorting changes the order", state.evidenceSort.column === "Item" && state.evidenceSort.direction === "asc");
     byId("evidence-sort-direction").click();
     set("evidence-sort-column", "Checked");
+    check("Evidence page: shows the time to first token of the current selection", firstTokenStrip("evidence-page"));
   });
 
   // ------------------------------------------------------------- knowledge
   await section("Know more page", async () => {
     app.showPage("knowledge");
+    check("Know more page: shows the time to first token of the current selection", firstTokenStrip("knowledge-page"));
+    const stripBefore = byId("knowledge-page").querySelector("[data-ttft-strip]").textContent;
+    set("prompt-length-input", 8192);
+    check("Know more page: the first-token time follows the Model → Hardware settings", byId("knowledge-page").querySelector("[data-ttft-strip]").textContent !== stripBefore && /8,192 prompt tokens/.test(byId("knowledge-page").querySelector("[data-ttft-strip]").textContent));
+    set("prompt-length-input", 2048);
     for (const tab of all(".knowledge-nav button")) {
       tab.click();
       const panel = all("[data-knowledge-page-content]").find((view) => view.dataset.knowledgePageContent === tab.dataset.knowledgePage);
