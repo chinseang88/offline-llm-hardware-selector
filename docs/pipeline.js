@@ -8,6 +8,8 @@
   const DEFAULT_LLM = "Qwen3 32B";
   const DEFAULT_RUNTIME = "llama.cpp";
   const KV_BITS = [[4, "4-bit"], [8, "8-bit"], [16, "16-bit FP16"]];
+  // Voice models can run at FP32 (several Whisper sizes are published that way), which doubles the FP16 reserve.
+  const VOICE_KV_BITS = [...KV_BITS, [32, "32-bit FP32"]];
   const DEFAULT_VOICE = [["VAD", "Silero VAD"], ["Diarization", "pyannote community-1"], ["ASR", "Qwen3-ASR-1.7B"]];
   const STAGE_TITLES = { VAD: "Voice activity detection (VAD)", Diarization: "Speaker diarization", ASR: "Speech recognition (ASR)" };
   const number = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
@@ -128,8 +130,8 @@
     return `<label>Runtime<select ${attrs} data-field="runtime"${disabled ? " disabled" : ""}>${ctx.runtimes().map((name) => option(name, name, name === value)).join("")}</select></label>`;
   }
 
-  function kvField(attrs, value, disabled) {
-    return `<label>KV cache<select ${attrs} data-field="kvBits"${disabled ? " disabled" : ""}>${KV_BITS.map(([bits, label]) => option(bits, label, bits === value)).join("")}</select></label>`;
+  function kvField(attrs, value, disabled, choices) {
+    return `<label>KV cache<select ${attrs} data-field="kvBits"${disabled ? " disabled" : ""}>${choices.map(([bits, label]) => option(bits, label, bits === value)).join("")}</select></label>`;
   }
 
   // What one stage takes from the accelerator's bandwidth once its runtime's efficiency is counted.
@@ -151,7 +153,7 @@
           <label>Model<select data-llm="0" data-field="model">${option("", "(Not used)", !slot.model)}${models.map((row) => option(row.Model, `${row.Model} · ${number.format(row["Total params (B)"])}B`, row.Model === slot.model)).join("")}</select></label>
           <label>Quantization<select data-llm="0" data-field="quant">${ctx.data.quants.map((quant) => option(quant.Quantization, quant.Quantization, quant.Quantization === slot.quant)).join("")}</select></label>
           ${runtimeField('data-llm="0"', slot.runtime, false)}
-          ${kvField('data-llm="0"', slot.kvBits, false)}
+          ${kvField('data-llm="0"', slot.kvBits, false, KV_BITS)}
           <label>Context<select data-llm="0" data-field="context">${CONTEXTS.map(([value, label]) => option(value, label, value === slot.context)).join("")}</select></label>
           <label>Target tok/s<input data-llm="0" data-field="target" type="number" min="1" step="1" inputmode="numeric" value="${slot.target}"></label>
           <label>First token, running alone<output>${used ? ctx.seconds(out.ttftAlone) : "—"}</output></label>
@@ -175,7 +177,7 @@
           <label>Model<select data-voice="${index}" data-field="model">${option("", "(Not used)", !stage.model)}${names.map((name) => option(name, name, name === stage.model)).join("")}</select></label>
           <label>Runs on<select data-voice="${index}" data-field="placement">${option("GPU", "GPU", stage.placement === "GPU")}${option("CPU", "CPU (not sized)", stage.placement === "CPU")}</select></label>
           ${runtimeField(`data-voice="${index}"`, stage.runtime, !onGpu)}
-          ${kvField(`data-voice="${index}"`, stage.kvBits, !onGpu)}
+          ${kvField(`data-voice="${index}"`, stage.kvBits, !onGpu, VOICE_KV_BITS)}
           <label>Resident weights (GB)<input data-voice="${index}" data-field="manual" type="number" min="0" step="0.001" inputmode="decimal" value="${ctx.escapeHtml(stage.manual)}" placeholder="${catalog === null ? "measure" : fine.format(catalog)}"></label>
           <label>Activation reserve (GB at FP16)<input data-voice="${index}" data-field="extra" type="number" min="0" step="0.5" inputmode="decimal" value="${stage.extra}"></label>
           <label>Bandwidth (GB/s)<input data-voice="${index}" data-field="bw" type="number" min="0" step="0.5" inputmode="decimal" value="${stage.bw}"></label>

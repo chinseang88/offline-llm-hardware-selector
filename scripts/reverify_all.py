@@ -540,6 +540,8 @@ def check_formulas(report, tables):
     voice_kv = run_pipeline(dict(args, voice=[dict(stage, kvBits=bits) for stage, bits in zip(args["voice"], (16, 8, 4))], llms=[dict(one_llm[0], target=20)]))
     report.check(group, "stage KV cache: a voice stage's reserve scales with its own KV bits (FP16 = as entered)", [row["extraGb"] for row in voice_kv["voice"]] == [5, 2.5, 1.25] and [row["kvBits"] for row in voice_kv["voice"]] == [16, 8, 4])
     near("stage KV cache: memory per set drops by the reserve saved", shared["setMemoryGb"] - voice_kv["setMemoryGb"], 2.5 + 3.75)
+    voice_fp32 = run_pipeline(dict(args, voice=[dict(stage, kvBits=bits) for stage, bits in zip(args["voice"], (16, 32, 16))], llms=[dict(one_llm[0], target=20)]))
+    report.check(group, "stage KV cache: a voice stage at FP32 counts twice its FP16 reserve", [row["extraGb"] for row in voice_fp32["voice"]] == [5, 10, 5] and close(voice_fp32["setMemoryGb"] - shared["setMemoryGb"], 5))
     report.check(group, "stage KV cache: FP16 in every voice stage equals the workbook reserve", close(shared["voiceMemoryGb"], want["voiceMemoryGb"]) and all(row["kvBits"] == 16 for row in shared["voice"])
                  and close(run_pipeline(dict(args, voice=[dict(stage, kvBits=16) for stage in args["voice"]]))["voiceMemoryGb"], want["voiceMemoryGb"]))
     report.check(group, "stage KV cache: the shared LLM setting does not change a voice stage", close(run_pipeline(dict(args, kvBits=8))["voiceMemoryGb"], want["voiceMemoryGb"]))
@@ -686,7 +688,7 @@ def build_cases():
     add("pipelineFit", **dict(args, activity="sequential", quantity=2, kvBits=8, headroomPct=5))
     add("pipelineFit", **dict(args, memoryGb=24, bandwidthGbps=456, utilization=0.5))
     add("pipelineFit", **dict(args, utilization=0))
-    staged = [dict(stage, utilization=u, kvBits=bits) for stage, u, bits in zip(args["voice"], (0.6, 0.5, 0.55), (16, 8, 4))]
+    staged = [dict(stage, utilization=u, kvBits=bits) for stage, u, bits in zip(args["voice"], (0.6, 0.5, 0.55), (32, 8, 4))]
     add("pipelineFit", **dict(args, utilization=None, voice=staged, llms=[dict(args["llms"][3], target=20, utilization=0.75, kvBits=8)], tflops=310, promptTokens=2048))
     add("pipelineFit", **dict(args, voice=staged, llms=[dict(slot, utilization=u, kvBits=kv) for slot, u, kv in zip(args["llms"], (0.5, 0.65, 0.8, 0.45), (4, 8, 16, 8))]))
     add("pipelineFit", **dict(args, utilization=None, voice=[dict(staged[0], utilization=0), *staged[1:]], llms=[dict(args["llms"][0], utilization=0.5)]))
