@@ -87,9 +87,18 @@ Each writes `out/<table>_evidence.csv|json` with one record per (row, parameter)
 
 `skills/offline-llm-hardware-selector/SKILL.md` packages the workflows for VS Code Copilot / Claude Code style agents: copy that folder into your skills directory (e.g. `~/.copilot/skills/` or `.claude/skills/`) and the agent will use the CSVs + scripts to answer sizing questions with citations, refresh evidence, or add new models/hardware with sources.
 
-## Excel workbook companion
+## Excel workbook
 
-The tables originate from an Excel planner (`Offline_LLM_Hardware_Selector_v28.xlsx`, not included). `scripts/export_public_data.py` exports the CSVs from it; `scripts/excel/` holds the scripts that write corrections, cell notes, colour fills and an *Evidence* sheet back into the open workbook via Excel COM (Windows only).
+`excel/Offline_LLM_Hardware_Selector_public.xlsx` is the public Excel edition of the selector. Its sheets *Model to Hardware*, *Hardware to Models* and *Multi-LLM* use live Excel formulas (the ones in `scripts/formulas.py`) over the same tables as the site: memory fit, decode tok/s, time to first token and, on Multi-LLM, the concurrent sets of Stage 1 to 4 with a runtime and KV cache setting per stage. Change the yellow cells; the other sheets are the published data tables. It leaves out CPU offload, per-device memory overrides and the Intel-only switch.
+
+```bash
+python scripts/build_public_workbook.py                 # rebuild it from data/*.csv after changing a table
+pwsh scripts/excel/finalize_public_workbook.ps1         # Windows + Excel: store calculated values, strip personal information
+```
+
+The build reads nothing but `data/*.csv`, refuses to write a file that carries a marker of non-public material, and `scripts/reverify_all.py` fails when the workbook no longer matches the tables.
+
+The tables originate from an internal Excel planner (`Offline_LLM_Hardware_Selector_v28.xlsx`). That file is **not** included and must not be committed: it carries non-public source notes and compute figures for pre-release hardware. `scripts/export_public_data.py` exports the CSVs from it; the other scripts in `scripts/excel/` write corrections, cell notes, colour fills and an *Evidence* sheet back into the open planner via Excel COM (Windows only).
 
 ## Scope and limitations
 

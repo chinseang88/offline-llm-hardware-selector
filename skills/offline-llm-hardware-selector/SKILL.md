@@ -17,6 +17,7 @@ Repo layout (paths relative to the repo root; find it with `**/offline-llm-hardw
 | `scripts/build_web_data.py` | Rebuild the GitHub Pages dataset in `docs/data.json` and Excel-parity audit in `docs/parity.json` after CSV edits |
 | `scripts/selector_parity.py` | Quantify web/CLI vs Excel memory and throughput formulas for 8K/32K workloads |
 | `scripts/export_public_data.py`, `scripts/excel/*` | Workbook ↔ CSV round trip (only when the Excel workbook is available) |
+| `scripts/build_public_workbook.py` | Rebuild `excel/Offline_LLM_Hardware_Selector_public.xlsx`, the public Excel edition, from `data/*.csv` only; then `scripts/excel/finalize_public_workbook.ps1` on Windows. Never commit the internal planner workbook |
 | `scripts/export_compute_estimates.py` | Refresh `data/compute.csv` (compute estimates for time to first token) from the workbook's Power sheet; the workbook figure of a pre-release row goes only to the ignored `docs/private_compute.json`. `--derive` redoes the figures derived from published columns for rows without a workbook estimate |
 | `data/*.csv` | models, gpus, cpus, voice_models, quant, libraries (runtime efficiency), arch_support, task_rules, compute (TFLOPS estimates) + evidence log |
 | `references/conventions.md` | Sizing formulas, status legend, hybrid/MLA KV conventions |

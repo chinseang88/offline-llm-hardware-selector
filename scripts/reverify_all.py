@@ -37,6 +37,7 @@ from common import DATA, DERIVED_BASIS, OUT, ROOT, UA, derive_compute, load_rows
 
 DOCS = ROOT / "docs"
 SCRIPTS = ROOT / "scripts"
+PUBLIC_WORKBOOK = "excel/Offline_LLM_Hardware_Selector_public.xlsx"
 JS_FILES = ("formulas.js", "theme.js", "pipeline.js", "app.js", "selftest.js")
 GROUPS = ("Data tables", "Cross-references", "Published build", "Page wiring", "Themes", "Formulas", "Python = browser", "Online")
 SHEET_TABLES = {"Models": ("models", "Model"), "GPUs": ("gpus", "Accelerator"), "CPUs": ("cpus", "CPU / platform"),
@@ -251,10 +252,39 @@ def check_build(report):
                  all(line in ignore for line in ("docs/private_reference.json", "docs/private_compute.json", "*.xlsx", "out/")))
     if shutil.which("git"):
         tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.splitlines()
-        private = [path for path in tracked if path.endswith((".xlsx", ".xlsm")) or path.startswith("out/") or path in ("docs/private_reference.json", "docs/private_compute.json")]
+        private = [path for path in tracked if (path.endswith((".xlsx", ".xlsm")) and path != PUBLIC_WORKBOOK) or path.startswith("out/") or path in ("docs/private_reference.json", "docs/private_compute.json")]
         report.check(group, "no private or scratch file is tracked by git", not private, sample(private))
     else:
         report.review(group, "git not found", "could not confirm that private files are untracked")
+    check_public_workbook(report, group)
+
+
+def check_public_workbook(report, group):
+    """The one workbook in git must be the public edition: same rows as the CSV tables, no marker of non-public material."""
+    path = ROOT / PUBLIC_WORKBOOK
+    if not path.exists():
+        report.review(group, "public Excel edition is missing", "Run python scripts/build_public_workbook.py")
+        return
+    import build_public_workbook as public
+    from openpyxl import load_workbook
+    markers = public.scan(path)
+    report.check(group, "public Excel edition carries no marker of non-public material", not markers, sample(markers))
+    book = load_workbook(path, data_only=True)
+    text = lambda value: "" if value is None else str(value).replace("\r\n", "\n")
+    same = lambda a, b: close(a, b) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else text(a) == text(b)
+    stale = []
+    for sheet, name in public.TABLES:
+        header, body = public.read_table(name)
+        rows = [list(row) for row in book[sheet].iter_rows(values_only=True)] if sheet in book.sheetnames else []
+        width = len(header)
+        expected = [header] + body
+        if len(rows) != len(expected) or any(not same(a, b) for got, want in zip(rows, expected) for a, b in zip((got + [None] * width)[:width], want)):
+            stale.append(sheet)
+    report.check(group, "public Excel edition matches the CSV tables", not stale, f"stale sheets: {stale}. Run python scripts/build_public_workbook.py, then scripts/excel/finalize_public_workbook.ps1")
+    author = [value for value in (book.properties.creator, book.properties.lastModifiedBy) if value and value != "Offline LLM Hardware Selector"]
+    report.check(group, "public Excel edition names no author", not author, author)
+    if not isinstance(book[public.ML][public.ML_OUT["sets"]].value, (int, float)):
+        report.review(group, "public Excel edition has no calculated values", "Open and save it in Excel, or run scripts/excel/finalize_public_workbook.ps1")
 
 
 # ---------------------------------------------------------------- page wiring

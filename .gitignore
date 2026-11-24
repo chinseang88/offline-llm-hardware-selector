@@ -6,6 +6,8 @@ __pycache__/
 # private workbooks / snapshots (never commit the internal Excel planner or private reference measurements)
 *.xlsx
 *.xlsm
+# the one exception: the public edition built from data/*.csv by scripts/build_public_workbook.py
+!excel/Offline_LLM_Hardware_Selector_public.xlsx
 docs/private_reference.json
 docs/private_compute.json
 
